@@ -62,6 +62,7 @@ app.add_middleware(
 class ResumeRequest(BaseModel):
     thread_id: str
     decision: str
+    human_feedback: Optional[str] = None
 
 
 def _build_pipeline_response(thread_id: str) -> dict:
@@ -74,19 +75,30 @@ def _build_pipeline_response(thread_id: str) -> dict:
     if is_paused and snapshot.tasks and snapshot.tasks[0].interrupts:
         payload = snapshot.tasks[0].interrupts[0].value
 
+    selected_name = snapshot.values.get("training_result", {}).get("selected_model_name", "unknown") if snapshot.values else "unknown"
+    saved_path = snapshot.values.get("model_saved_path") or f"saved_models/{thread_id}_{selected_name.replace(' ', '_')}.joblib"
+
     return {
         "thread_id": thread_id,
         "status": "paused" if is_paused else ("completed" if not next_nodes else "running"),
         "next_nodes": next_nodes,
         "review_payload": payload,
+        "model_saved_path": saved_path if not is_paused and snapshot.values.get("human_decision") == "approve" else None,
         "values": {
             "unresolved_human_rejection": snapshot.values.get("unresolved_human_rejection", False),
             "unresolved_quality_issue": snapshot.values.get("unresolved_quality_issue", False),
             "human_decision": snapshot.values.get("human_decision"),
+            "human_feedback": snapshot.values.get("human_feedback"),
             "retry_count": snapshot.values.get("retry_count", 0),
             "rejection_reroute_count": snapshot.values.get("rejection_reroute_count", 0),
+            "model_saved_path": saved_path,
         },
     }
+
+
+from data_analysis_agent import analyze_raw_dataset
+
+_EDA_CACHE: dict[str, dict] = {}
 
 
 @app.post("/api/pipeline/start")
@@ -97,21 +109,23 @@ async def start_pipeline(
     business_objective: Optional[str] = Form(None),
 ):
     """
-    Start initial pipeline execution for an uploaded dataset.
+    Ingest uploaded CSV, construct initial state, and invoke pipeline graph
+    until paused at human_approval_node or completed.
+    Also computes exploratory data analysis via Data Analysis Agent.
     """
-    if task_type not in ("classification", "regression"):
-        raise HTTPException(status_code=400, detail="task_type must be 'classification' or 'regression'")
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are supported")
 
+    contents = await file.read()
     try:
-        contents = await file.read()
         df_raw = pd.read_csv(io.BytesIO(contents))
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Failed to parse CSV file: {exc}")
+        raise HTTPException(status_code=400, detail=f"Invalid CSV file format: {exc}")
 
     if target_column not in df_raw.columns:
         raise HTTPException(
             status_code=400,
-            detail=f"Target column '{target_column}' not found in CSV. Available columns: {list(df_raw.columns)}",
+            detail=f"Target column '{target_column}' not found in CSV headers: {list(df_raw.columns)}"
         )
 
     if not os.environ.get("GROQ_API_KEY"):
@@ -123,21 +137,22 @@ async def start_pipeline(
     thread_id = f"run-{uuid.uuid4().hex[:8]}"
     config = {"configurable": {"thread_id": thread_id}}
 
+    # Compute EDA analysis report
+    try:
+        _EDA_CACHE[thread_id] = analyze_raw_dataset(df_raw, target_column)
+    except Exception as exc:
+        print(f"[server] EDA analysis failed: {exc}")
+
     initial_state = {
         "df_bytes": df_to_bytes(df_raw),
         "target_column": target_column,
         "task_type": task_type,
-        "business_objective": business_objective.strip() if business_objective and business_objective.strip() else None,
-        "plan": None,
-        "data_agent_result": None,
-        "cleaned_df_bytes": None,
-        "last_failure_reason": None,
+        "business_objective": business_objective or "",
         "retry_count": 0,
         "unresolved_quality_issue": False,
-        "training_result": None,
-        "selected_model_bytes": None,
-        "fairness_result": None,
+        "last_failure_reason": None,
         "human_decision": None,
+        "human_feedback": None,
         "rejection_reroute_count": 0,
         "unresolved_human_rejection": False,
         "rejected_models": [],
@@ -148,7 +163,19 @@ async def start_pipeline(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Pipeline execution error: {exc}")
 
-    return _build_pipeline_response(thread_id)
+    res = _build_pipeline_response(thread_id)
+    res["eda_report"] = _EDA_CACHE.get(thread_id, {})
+    return res
+
+
+@app.get("/api/pipeline/eda/{thread_id}")
+async def get_eda_report(thread_id: str):
+    """
+    Get Data Analysis Agent EDA report for a given run thread_id.
+    """
+    if thread_id not in _EDA_CACHE:
+        raise HTTPException(status_code=404, detail="EDA report not found for this run")
+    return _EDA_CACHE[thread_id]
 
 
 @app.post("/api/pipeline/resume")
@@ -161,9 +188,13 @@ async def resume_pipeline(req: ResumeRequest):
         raise HTTPException(status_code=400, detail=f"Decision must be one of {allowed}")
 
     config = {"configurable": {"thread_id": req.thread_id}}
+    resume_payload = {
+        "decision": req.decision,
+        "human_feedback": req.human_feedback or "",
+    }
 
     try:
-        graph.invoke(Command(resume=req.decision), config=config)
+        graph.invoke(Command(resume=resume_payload), config=config)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error resuming graph execution: {exc}")
 

@@ -329,6 +329,7 @@ def plan_pipeline(
     task_type: Literal["classification", "regression"],
     failure_context: Optional[dict] = None,
     business_objective: str = "",
+    human_feedback: Optional[str] = None,
 ) -> dict:
     """
     Generate a validated, JSON-serialisable pipeline plan for a dataset.
@@ -390,6 +391,15 @@ def plan_pipeline(
             "Please ensure your preprocessing steps, model choices, and governance reasoning align with this objective."
         )
         system_prompt = system_prompt + biz_note
+
+    # --- Inject explicit human feedback / directives ---
+    if human_feedback and human_feedback.strip():
+        fb_note = (
+            f"\nEXPLICIT HUMAN REVIEWER INSTRUCTION: {human_feedback.strip()}\n"
+            "The human auditor rejected the previous pipeline proposal and provided the explicit directive above. "
+            "You MUST incorporate these instructions into your revised plan and preprocessing steps."
+        )
+        system_prompt = system_prompt + fb_note
 
     # --- Inject failure context on retry (backward-compatible: skipped when None) ---
     # IMPORTANT: inject into the SYSTEM prompt as a concise plain-text note —

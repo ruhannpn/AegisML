@@ -65,6 +65,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier, XGBRegressor
 
 # ---------------------------------------------------------------------------
@@ -261,9 +262,16 @@ def _shap_summary(
             )
             return []
 
-        mean_abs = np.abs(shap_vals).mean(axis=0)
+        if isinstance(shap_vals, list):
+            mean_abs = np.mean([np.abs(v).mean(axis=0) for v in shap_vals], axis=0)
+        else:
+            mean_abs = np.abs(shap_vals)
+            if mean_abs.ndim == 3:
+                mean_abs = mean_abs.mean(axis=-1)
+            mean_abs = mean_abs.mean(axis=0)
+
         indexed = sorted(
-            zip(feature_names, mean_abs.tolist()),
+            zip(feature_names, [float(x) for x in mean_abs]),
             key=lambda x: x[1],
             reverse=True,
         )
@@ -326,6 +334,11 @@ def run_training_agent(
     # ------------------------------------------------------------------
     X = cleaned_df.drop(columns=[target_column])
     y = cleaned_df[target_column]
+
+    # Convert classification target to 0..N-1 contiguous integers for XGBoost compatibility
+    if task_type == "classification":
+        le = LabelEncoder()
+        y = pd.Series(le.fit_transform(y), index=y.index)
 
     # Convert bool columns to int for XGBoost compatibility
     bool_cols = [c for c in X.columns if pd.api.types.is_bool_dtype(X[c])]

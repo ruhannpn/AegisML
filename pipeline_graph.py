@@ -105,6 +105,7 @@ def planner_node(state: PipelineState, config: RunnableConfig) -> dict:
         task_type=state["task_type"],
         failure_context=failure_context,
         business_objective=state.get("business_objective", "") or "",
+        human_feedback=state.get("human_feedback", "") or "",
     )
 
     models_str = ", ".join(plan.get("recommended_models", []))
@@ -367,21 +368,30 @@ def human_approval_node(state: PipelineState, config: RunnableConfig) -> dict:
     }
 
     print("[human_approval_node] Interrupting execution for Human Approval...")
-    decision = interrupt(payload)
-    print(f"[human_approval_node] RESUMED! Human decision received = '{decision}'")
+    raw_decision = interrupt(payload)
+
+    if isinstance(raw_decision, dict):
+        decision = raw_decision.get("decision", "approve")
+        human_feedback = raw_decision.get("human_feedback", "")
+    else:
+        decision = str(raw_decision)
+        human_feedback = ""
+
+    print(f"[human_approval_node] RESUMED! Human decision received = '{decision}', feedback = '{human_feedback}'")
 
     log_audit_event(
         run_id=run_id,
         event_type="human_decision",
         event_source="human_reviewer",
-        summary=f"Human reviewer submitted decision: '{decision}'",
+        summary=f"Human reviewer submitted decision: '{decision}'" + (f" (Feedback: '{human_feedback}')" if human_feedback else ""),
         details={
             "human_decision": decision,
+            "human_feedback": human_feedback,
             "rejection_reroute_count": state.get("rejection_reroute_count", 0),
         },
     )
 
-    return {"human_decision": decision}
+    return {"human_decision": decision, "human_feedback": human_feedback}
 
 
 # ---------------------------------------------------------------------------

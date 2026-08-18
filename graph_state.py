@@ -144,3 +144,4 @@ class PipelineState(TypedDict, total=False):
     unresolved_human_rejection: bool
     business_objective: Optional[str]
     rejected_models: Optional[list[str]]
+    human_feedback: Optional[str]
