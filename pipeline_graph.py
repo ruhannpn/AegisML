@@ -104,6 +104,7 @@ def planner_node(state: PipelineState, config: RunnableConfig) -> dict:
         target_column=state["target_column"],
         task_type=state["task_type"],
         failure_context=failure_context,
+        business_objective=state.get("business_objective", "") or "",
     )
 
     models_str = ", ".join(plan.get("recommended_models", []))
@@ -197,7 +198,22 @@ def route_after_data_agent(state: PipelineState) -> str:
 def training_node(state: PipelineState, config: RunnableConfig) -> dict:
     run_id = _get_run_id(config)
     cleaned_df = bytes_to_df(state["cleaned_df_bytes"])
-    recommended_models = state["plan"].get("recommended_models", [])
+    recommended_models = list(state["plan"].get("recommended_models", []))
+    rejected = [m.lower() for m in (state.get("rejected_models") or [])]
+
+    if rejected:
+        filtered_models = [m for m in recommended_models if m.lower() not in rejected]
+        print(
+            f"[training_node] Filtering out rejected models {rejected} from recommended {recommended_models} "
+            f"→ remaining: {filtered_models}"
+        )
+        if filtered_models:
+            recommended_models = filtered_models
+        else:
+            print(f"[training_node] All recommended models {recommended_models} were rejected! Fallback to unrejected models...")
+            all_known = ["LogisticRegression", "RandomForest", "XGBoost", "GradientBoosting", "Ridge", "Lasso"]
+            recommended_models = [m for m in all_known if m.lower() not in rejected]
+
     print(f"[training_node] Training models: {recommended_models}")
 
     try:
@@ -275,7 +291,13 @@ def fairness_node(state: PipelineState, config: RunnableConfig) -> dict:
         return {"fairness_result": err_res}
 
     fitted_model = bytes_to_model(model_bytes)
-    sensitive_candidates = state.get("plan", {}).get("sensitive_attribute_candidates", [])
+    plan = state.get("plan") or {}
+    sensitive_candidates = (
+        plan.get("sensitive_attribute_candidates")
+        or plan.get("sensitive_attributes")
+        or plan.get("protected_attributes")
+        or []
+    )
     print(f"[fairness_node] Running fairness check on candidates: {sensitive_candidates}")
 
     result = run_fairness_agent(
@@ -486,11 +508,19 @@ def _increment_human_reroute_planner(state: PipelineState) -> dict:
 
 
 def _increment_human_reroute_training(state: PipelineState) -> dict:
-    """Called when human rejects model/fairness. Increments reroute count."""
+    """Called when human rejects model/fairness. Increments reroute count and tracks rejected model."""
     new_count = state.get("rejection_reroute_count", 0) + 1
-    print(f"[increment_human_reroute_training] rejection_reroute_count: {new_count - 1} → {new_count}")
+    selected_model = state.get("training_result", {}).get("selected_model_name")
+    rejected = list(state.get("rejected_models") or [])
+    if selected_model and selected_model not in rejected:
+        rejected.append(selected_model)
+    print(
+        f"[increment_human_reroute_training] rejection_reroute_count: {new_count - 1} → {new_count} | "
+        f"Appended '{selected_model}' to rejected_models: {rejected}"
+    )
     return {
         "rejection_reroute_count": new_count,
+        "rejected_models": rejected,
     }
 
 

@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AegisML — Multi-Agent AI Governance Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --card-bg: rgba(17, 24, 39, 0.8);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --primary-violet: #7c3aed;
+      --primary-indigo: #6366f1;
+      --primary-gradient: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
+      --accent-green: #10b981;
+      --accent-red: #ef4444;
+      --accent-amber: #f59e0b;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --text-dark: #6b7280;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* Navbar Header */
+    header {
+      background: rgba(11, 15, 25, 0.9);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 16px 32px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .logo-area { display: flex; align-items: center; gap: 12px; }
+    .logo-icon {
+      width: 36px; height: 36px;
+      background: var(--primary-gradient);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+      box-shadow: 0 0 15px rgba(124, 58, 237, 0.4);
+    }
+    .logo-text { font-size: 1.25rem; font-weight: 800; }
+    .logo-tag { font-size: 0.75rem; background: rgba(99, 102, 241, 0.2); color: #a5b4fc; padding: 2px 8px; border-radius: 12px; margin-left: 6px; }
+
+    /* DAG Pipeline Progress Tracker Bar */
+    .dag-tracker { display: flex; gap: 8px; align-items: center; }
+    .dag-step {
+      font-size: 0.75rem; font-weight: 600;
+      padding: 6px 12px; border-radius: 20px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      display: flex; align-items: center; gap: 6px;
+      transition: all 0.3s ease;
+    }
+    .dag-step.active {
+      background: rgba(124, 58, 237, 0.2);
+      border-color: var(--primary-violet);
+      color: #c4b5fd;
+      box-shadow: 0 0 10px rgba(124, 58, 237, 0.3);
+    }
+    .dag-step.done {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: var(--accent-green);
+      color: #6ee7b7;
+    }
+
+    /* Container Layout */
+    .dashboard-container {
+      max-width: 1600px;
+      margin: 24px auto;
+      padding: 0 24px;
+      display: grid;
+      grid-template-columns: 460px 1fr;
+      gap: 24px;
+    }
+
+    /* Glassmorphism Card */
+    .glass-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+    .card-title { font-size: 1.1rem; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+
+    /* Form Controls */
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
+    input[type="text"], select, textarea {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text-main);
+      font-family: inherit;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="text"]:focus, select:focus, textarea:focus { border-color: var(--primary-indigo); }
+
+    /* Upload Box */
+    .upload-zone {
+      border: 2px dashed rgba(124, 58, 237, 0.4);
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+      background: rgba(124, 58, 237, 0.04);
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .upload-zone:hover { border-color: var(--primary-violet); background: rgba(124, 58, 237, 0.08); }
+    .upload-icon { font-size: 32px; margin-bottom: 8px; }
+
+    /* Radio Group */
+    .radio-group { display: flex; gap: 12px; }
+    .radio-option {
+      flex: 1; padding: 10px; border-radius: 8px;
+      background: rgba(0, 0, 0, 0.3); border: 1px solid var(--card-border);
+      text-align: center; cursor: pointer; font-size: 0.85rem; font-weight: 600;
+      transition: all 0.2s;
+    }
+    .radio-option.selected {
+      background: rgba(99, 102, 241, 0.2); border-color: var(--primary-indigo); color: #a5b4fc;
+    }
+
+    /* Buttons */
+    .btn-primary {
+      width: 100%;
+      background: var(--primary-gradient);
+      border: none;
+      color: white;
+      padding: 14px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 0.95rem;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(124, 58, 237, 0.4);
+      transition: transform 0.1s, box-shadow 0.2s;
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(124, 58, 237, 0.6); }
+
+    /* Live DAG Diagram Grid */
+    .dag-flow-container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 16px 8px;
+      overflow-x: auto;
+    }
+    .dag-node-box {
+      flex: 1;
+      min-width: 125px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 14px 10px;
+      text-align: center;
+      position: relative;
+      transition: all 0.3s ease;
+    }
+    .dag-node-box .node-icon { font-size: 22px; margin-bottom: 4px; }
+    .dag-node-box .node-title { font-size: 0.8rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px; }
+    .dag-node-box .node-status-pill {
+      font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
+      padding: 3px 8px; border-radius: 10px; display: inline-block;
+    }
+
+    /* Node States */
+    .dag-node-box.pending { border-color: rgba(255, 255, 255, 0.08); opacity: 0.6; }
+    .dag-node-box.pending .node-status-pill { background: rgba(107, 114, 128, 0.2); color: #9ca3af; }
+
+    .dag-node-box.running {
+      border-color: var(--primary-violet);
+      box-shadow: 0 0 15px rgba(124, 58, 237, 0.4);
+      animation: nodePulse 1.5s infinite alternate;
+    }
+    .dag-node-box.running .node-status-pill { background: rgba(124, 58, 237, 0.3); color: #c4b5fd; }
+
+    .dag-node-box.completed {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(16, 185, 129, 0.06);
+    }
+    .dag-node-box.completed .node-status-pill { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+
+    .dag-node-box.awaiting {
+      border-color: rgba(245, 158, 11, 0.5);
+      background: rgba(245, 158, 11, 0.08);
+      box-shadow: 0 0 15px rgba(245, 158, 11, 0.3);
+    }
+    .dag-node-box.awaiting .node-status-pill { background: rgba(245, 158, 11, 0.3); color: #fbbf24; }
+
+    @keyframes nodePulse {
+      0% { box-shadow: 0 0 5px rgba(124, 58, 237, 0.3); }
+      100% { box-shadow: 0 0 20px rgba(124, 58, 237, 0.7); }
+    }
+
+    .dag-connector { font-size: 16px; color: var(--text-dark); flex-shrink: 0; }
+
+    /* Winner KPI Block */
+    .kpi-winner {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.05) 100%);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .kpi-val { font-size: 1.8rem; font-weight: 800; color: #34d399; }
+    .kpi-label { font-size: 0.8rem; text-transform: uppercase; color: #a7f3d0; font-weight: 600; }
+
+    /* Tabs */
+    .tabs-header { display: flex; gap: 8px; border-bottom: 1px solid var(--card-border); margin-bottom: 20px; }
+    .tab-btn {
+      padding: 10px 18px; font-weight: 600; font-size: 0.85rem; color: var(--text-muted);
+      border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    .tab-btn.active { color: var(--text-main); border-bottom-color: var(--primary-violet); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.85rem; }
+    th { text-align: left; padding: 10px 14px; background: rgba(0, 0, 0, 0.4); color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--card-border); }
+    td { padding: 12px 14px; border-bottom: 1px solid var(--card-border); }
+    tr:hover { background: rgba(255, 255, 255, 0.02); }
+
+    /* Badges & Tags */
+    .badge { padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 0.75rem; }
+    .badge-pass { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+    .badge-fail { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    .badge-winner { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+
+    /* Code & Details */
+    code, pre { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; background: rgba(0, 0, 0, 0.4); padding: 2px 6px; border-radius: 4px; }
+    pre { padding: 14px; overflow-x: auto; color: #a5b4fc; }
+
+    /* Audit Log List */
+    .audit-list { display: flex; flex-direction: column; gap: 10px; max-height: 400px; overflow-y: auto; }
+    .audit-item { background: rgba(0, 0, 0, 0.3); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px 16px; font-size: 0.85rem; }
+    .audit-header { display: flex; justify-content: space-between; margin-bottom: 4px; }
+    .audit-time { color: var(--text-dark); font-size: 0.75rem; }
+
+    /* Spinner Overlay */
+    .overlay {
+      display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(9, 13, 22, 0.85); backdrop-filter: blur(8px);
+      z-index: 200; justify-content: center; align-items: center; flex-direction: column;
+    }
+    .spinner { width: 48px; height: 48px; border: 4px solid rgba(124, 58, 237, 0.2); border-top-color: var(--primary-violet); border-radius: 50%; animation: spin 1s infinite linear; margin-bottom: 16px; }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo-area">
+      <div class="logo-icon">🛡️</div>
+      <div>
+        <div class="logo-text">AegisML <span class="logo-tag">FastAPI Backend</span></div>
+      </div>
+    </div>
+
+    <!-- Live DAG Pipeline Progress Tracker -->
+    <div class="dag-tracker">
+      <div class="dag-step" id="step-planner">🧠 Planner</div>
+      <span>→</span>
+      <div class="dag-step" id="step-data">🧹 Data Agent</div>
+      <span>→</span>
+      <div class="dag-step" id="step-training">🏆 Training Agent</div>
+      <span>→</span>
+      <div class="dag-step" id="step-fairness">⚖️ Fairness Agent</div>
+      <span>→</span>
+      <div class="dag-step" id="step-approval">⏸️ Human Approval Gate</div>
+    </div>
+
+    <div style="font-size: 0.8rem; color: var(--text-muted);">Run ID: <code id="run-id-display">None</code></div>
+  </header>
+
+  <div class="dashboard-container">
+    
+    <!-- LEFT COLUMN: Controls & Decisions -->
+    <div>
+      
+      <!-- Card 1: Setup & Upload -->
+      <div class="glass-card">
+        <div class="card-title">⚙️ 1. Dataset & Pipeline Setup</div>
+        
+        <div class="form-group">
+          <label>Upload CSV Dataset</label>
+          <div class="upload-zone" onclick="document.getElementById('csv-file').click()">
+            <div class="upload-icon">📁</div>
+            <div id="file-label" style="font-size: 0.9rem; font-weight: 600;">Click to select CSV file</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Supports any tabular CSV dataset</div>
+          </div>
+          <input type="file" id="csv-file" accept=".csv" style="display: none;" onchange="handleFileSelect(event)">
+        </div>
+
+        <div class="form-group">
+          <label>Target / Label Column Name</label>
+          <select id="target-col">
+            <option value="">Upload CSV to populate column options...</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>ML Task Type</label>
+          <div class="radio-group">
+            <div class="radio-option selected" id="task-clf" onclick="setTaskType('classification')">Classification</div>
+            <div class="radio-option" id="task-reg" onclick="setTaskType('regression')">Regression</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Business Objective & Constraints (Optional)</label>
+          <textarea id="biz-obj" rows="3" placeholder="e.g. Optimize for high precision, ensure strict algorithmic fairness across gender/race..."></textarea>
+        </div>
+
+        <button class="btn-primary" onclick="runPipeline()">🚀 Run Governed Pipeline</button>
+      </div>
+
+      <!-- Card 2: Human Approval Decision (Shown when paused) -->
+      <div class="glass-card" id="decision-card" style="display: none; border-color: rgba(245, 158, 11, 0.4);">
+        <div class="card-title" style="color: #fbbf24;">✍️ 2. Submit Governance Decision</div>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 14px;">
+          Pipeline execution is paused at the Governance Gate. Please evaluate recommendations and select an action:
+        </p>
+
+        <div class="form-group">
+          <div class="radio-group" style="flex-direction: column;">
+            <div class="radio-option selected" id="opt-approve" onclick="setDecision('approve')">
+              🟢 Approve — Deploy model to production
+            </div>
+            <div class="radio-option" id="opt-reject-data" onclick="setDecision('reject_data_quality')">
+              🔴 Reject — Data quality concerns (Reroute to Planner)
+            </div>
+            <div class="radio-option" id="opt-reject-model" onclick="setDecision('reject_model_or_fairness')">
+              🔴 Reject — Model choice / fairness concerns (Reroute to Training)
+            </div>
+          </div>
+        </div>
+
+        <button class="btn-primary" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);" onclick="submitDecision()">Submit Governance Decision</button>
+      </div>
+
+    </div>
+
+    <!-- RIGHT COLUMN: Dashboard Outputs & Audit Trail -->
+    <div>
+
+      <!-- Live Pipeline DAG Flow Diagram Card -->
+      <div class="glass-card" style="margin-bottom: 20px;">
+        <div class="card-title" style="margin-bottom: 8px;">
+          <span>🌐 Live Pipeline DAG Topology</span>
+          <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal; margin-left: auto;">Real-time Agent Execution Map</span>
+        </div>
+        <div class="dag-flow-container">
+          <div class="dag-node-box pending" id="node-planner">
+            <div class="node-icon">🧠</div>
+            <div class="node-title">Planner Agent</div>
+            <div class="node-status-pill" id="pill-planner">PENDING</div>
+          </div>
+
+          <div class="dag-connector">➔</div>
+
+          <div class="dag-node-box pending" id="node-data">
+            <div class="node-icon">🧹</div>
+            <div class="node-title">Data Agent</div>
+            <div class="node-status-pill" id="pill-data">PENDING</div>
+          </div>
+
+          <div class="dag-connector">➔</div>
+
+          <div class="dag-node-box pending" id="node-training">
+            <div class="node-icon">🏆</div>
+            <div class="node-title">Training Agent</div>
+            <div class="node-status-pill" id="pill-training">PENDING</div>
+          </div>
+
+          <div class="dag-connector">➔</div>
+
+          <div class="dag-node-box pending" id="node-fairness">
+            <div class="node-icon">⚖️</div>
+            <div class="node-title">Fairness Agent</div>
+            <div class="node-status-pill" id="pill-fairness">PENDING</div>
+          </div>
+
+          <div class="dag-connector">➔</div>
+
+          <div class="dag-node-box pending" id="node-gate">
+            <div class="node-icon">⏸️</div>
+            <div class="node-title">Human Gate</div>
+            <div class="node-status-pill" id="pill-gate">PENDING</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Winner Model KPI Card -->
+      <div class="kpi-winner" id="kpi-block" style="display: none;">
+        <div>
+          <div class="kpi-label">Selected Best Model</div>
+          <div class="kpi-val" id="winner-model-name">—</div>
+        </div>
+        <div style="text-align: right;">
+          <div class="kpi-label" id="primary-metric-label">Primary Metric</div>
+          <div class="kpi-val" style="color: #60a5fa;" id="primary-metric-val">—</div>
+        </div>
+      </div>
+
+      <!-- Governance Outputs Tabs -->
+      <div class="glass-card">
+        <div class="tabs-header">
+          <button class="tab-btn active" onclick="switchTab(event, 'tab-planner')">🧠 Planner Proposal</button>
+          <button class="tab-btn" onclick="switchTab(event, 'tab-data')">🧹 Data Cleaning</button>
+          <button class="tab-btn" onclick="switchTab(event, 'tab-leaderboard')">🏆 Leaderboard</button>
+          <button class="tab-btn" onclick="switchTab(event, 'tab-fairness')">⚖️ Fairness Assessment</button>
+        </div>
+
+        <!-- Tab 1: Planner -->
+        <div class="tab-content active" id="tab-planner">
+          <div style="font-size: 0.9rem; margin-bottom: 16px;"><strong>Reasoning:</strong> <span id="plan-reasoning" style="color: var(--text-muted);">Run pipeline to generate proposal</span></div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div>
+              <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 6px;">Data Quality Concerns Identified:</div>
+              <ul id="plan-concerns" style="padding-left: 20px; font-size: 0.85rem; margin-bottom: 16px;"></ul>
+
+              <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 6px;">Recommended Models:</div>
+              <ul id="plan-models" style="padding-left: 20px; font-size: 0.85rem;"></ul>
+            </div>
+            <div>
+              <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 6px;">Recommended Preprocessing Steps:</div>
+              <ul id="plan-steps" style="padding-left: 20px; font-size: 0.85rem; margin-bottom: 16px;"></ul>
+
+              <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 6px;">Sensitive Attribute Candidates:</div>
+              <ul id="plan-sensitive" style="padding-left: 20px; font-size: 0.85rem;"></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Data Agent -->
+        <div class="tab-content" id="tab-data">
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px;">
+            <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; text-align: center;">
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Missing % After Cleaning</div>
+              <div style="font-size: 1.2rem; font-weight: 700;" id="data-missing">0%</div>
+            </div>
+            <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; text-align: center;">
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Rows Dropped</div>
+              <div style="font-size: 1.2rem; font-weight: 700;" id="data-rows-dropped">0</div>
+            </div>
+            <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; text-align: center;">
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Columns Dropped</div>
+              <div style="font-size: 1.2rem; font-weight: 700;" id="data-cols-dropped">0</div>
+            </div>
+          </div>
+          <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 6px;">Executed Preprocessing Actions:</div>
+          <ul id="data-actions" style="padding-left: 20px; font-size: 0.85rem;"></ul>
+        </div>
+
+        <!-- Tab 3: Leaderboard -->
+        <div class="tab-content" id="tab-leaderboard">
+          <table>
+            <thead>
+              <tr id="leaderboard-thead">
+                <th>Rank</th>
+                <th>Model Name</th>
+                <th>Selection</th>
+                <th>Metric 1</th>
+                <th>Metric 2</th>
+                <th>Metric 3</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboard-tbody">
+              <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No models trained yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Tab 4: Fairness Assessment -->
+        <div class="tab-content" id="tab-fairness">
+          <div id="fairness-status-badge" style="margin-bottom: 12px;"></div>
+          <table>
+            <thead>
+              <tr>
+                <th>Attribute</th>
+                <th>Status</th>
+                <th>Disparate Impact (≥0.80)</th>
+                <th>Demographic Parity Diff (≤0.10)</th>
+                <th>Group Rate Gap</th>
+              </tr>
+            </thead>
+            <tbody id="fairness-tbody">
+              <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No fairness assessment generated</td></tr>
+            </tbody>
+          </table>
+          <div style="margin-top: 14px; font-size: 0.8rem; color: var(--text-muted);" id="fairness-skipped"></div>
+        </div>
+
+      </div>
+
+      <!-- Live Audit Log Card -->
+      <div class="glass-card">
+        <div class="card-title">📜 3. Governance Audit Trail</div>
+        <div class="audit-list" id="audit-trail-list">
+          <div style="font-size: 0.85rem; color: var(--text-muted); text-align: center; padding: 20px;">No audit logs registered for this run yet</div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Loading Overlay -->
+  <div class="overlay" id="loading-overlay">
+    <div class="spinner"></div>
+    <div style="font-size: 1.1rem; font-weight: 700; color: #c4b5fd;">Executing Multi-Agent Governance Pipeline...</div>
+    <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">Planner → Data Agent → Training Agent → Fairness Agent</div>
+  </div>
+
+  <script>
+    let selectedTaskType = 'classification';
+    let selectedDecision = 'approve';
+    let currentThreadId = null;
+
+    let csvTextData = "";
+
+    function autoDetectTaskType(targetCol) {
+      if (!csvTextData || !targetCol) return;
+      const lines = csvTextData.split('\n').filter(l => l.trim().length > 0);
+      if (lines.length < 2) return;
+
+      const headers = lines[0].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+      const colIdx = headers.indexOf(targetCol);
+      if (colIdx === -1) return;
+
+      const sampleVals = [];
+      for (let i = 1; i < Math.min(lines.length, 100); i++) {
+        const parts = lines[i].split(',').map(p => p.trim().replace(/^["']|["']$/g, ''));
+        if (parts[colIdx] !== undefined && parts[colIdx] !== "") {
+          sampleVals.push(parts[colIdx]);
+        }
+      }
+
+      if (sampleVals.length === 0) return;
+
+      const uniqueVals = new Set(sampleVals);
+      const isNumeric = sampleVals.every(v => !isNaN(Number(v)));
+      const hasFloats = sampleVals.some(v => v.includes('.'));
+
+      if (isNumeric && (hasFloats || uniqueVals.size > 15)) {
+        setTaskType('regression');
+      } else {
+        setTaskType('classification');
+      }
+    }
+
+    function handleFileSelect(e) {
+      const file = e.target.files[0];
+      if (file) {
+        document.getElementById('file-label').innerText = file.name;
+
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+          csvTextData = evt.target.result;
+          const firstLine = csvTextData.split('\n')[0];
+          if (firstLine) {
+            const cols = firstLine.split(',').map(c => c.trim().replace(/^["']|["']$/g, '')).filter(c => c.length > 0);
+            const targetSelect = document.getElementById('target-col');
+            targetSelect.innerHTML = cols.map(c => `<option value="${c}">${c}</option>`).join('');
+
+            // Add change listener to target dropdown
+            targetSelect.onchange = function() { autoDetectTaskType(targetSelect.value); };
+
+            // Smart auto-selection
+            let defaultCol = cols[cols.length - 1];
+            for (let preferred of ['income', 'quality', 'Unemployment', 'target', 'label']) {
+              const matched = cols.find(c => c.toLowerCase() === preferred.toLowerCase());
+              if (matched) { defaultCol = matched; break; }
+            }
+            targetSelect.value = defaultCol;
+            autoDetectTaskType(defaultCol);
+          }
+        };
+        reader.readAsText(file.slice(0, 65536)); // Read up to 64KB for robust sampling
+      }
+    }
+
+    function setTaskType(type) {
+      selectedTaskType = type;
+      document.getElementById('task-clf').classList.toggle('selected', type === 'classification');
+      document.getElementById('task-reg').classList.toggle('selected', type === 'regression');
+    }
+
+    function setDecision(dec) {
+      selectedDecision = dec;
+      document.getElementById('opt-approve').classList.toggle('selected', dec === 'approve');
+      document.getElementById('opt-reject-data').classList.toggle('selected', dec === 'reject_data_quality');
+      document.getElementById('opt-reject-model').classList.toggle('selected', dec === 'reject_model_or_fairness');
+    }
+
+    function switchTab(evt, tabId) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      evt.target.classList.add('active');
+      document.getElementById(tabId).classList.add('active');
+    }
+
+    async function runPipeline() {
+      const fileInput = document.getElementById('csv-file');
+      const targetCol = document.getElementById('target-col').value.trim();
+      const bizObj = document.getElementById('biz-obj').value.trim();
+
+      if (!fileInput.files[0]) { alert("Please select a CSV file."); return; }
+      if (!targetCol) { alert("Please enter the target column name."); return; }
+
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      formData.append('target_column', targetCol);
+      formData.append('task_type', selectedTaskType);
+      if (bizObj) formData.append('business_objective', bizObj);
+
+      document.getElementById('loading-overlay').style.display = 'flex';
+
+      try {
+        const res = await fetch('/api/pipeline/start', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Pipeline execution failed');
+        renderPipelineResults(data);
+      } catch (err) {
+        alert("Error: " + err.message);
+      } finally {
+        document.getElementById('loading-overlay').style.display = 'none';
+      }
+    }
+
+    async function submitDecision() {
+      if (!currentThreadId) return;
+      document.getElementById('loading-overlay').style.display = 'flex';
+
+      try {
+        const res = await fetch('/api/pipeline/resume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thread_id: currentThreadId, decision: selectedDecision })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to submit decision');
+        renderPipelineResults(data);
+      } catch (err) {
+        alert("Error: " + err.message);
+      } finally {
+        document.getElementById('loading-overlay').style.display = 'none';
+      }
+    }
+
+    function updateDAGTopologyNodes(data) {
+      const isPaused = data.status === 'paused';
+      const payload = data.review_payload || {};
+
+      // Node Planner
+      const nPlanner = document.getElementById('node-planner');
+      const pPlanner = document.getElementById('pill-planner');
+      if (payload.plan_summary) {
+        nPlanner.className = 'dag-node-box completed';
+        pPlanner.innerText = 'COMPLETE';
+      }
+
+      // Node Data
+      const nData = document.getElementById('node-data');
+      const pData = document.getElementById('pill-data');
+      if (payload.quality_report) {
+        nData.className = 'dag-node-box completed';
+        pData.innerText = 'COMPLETE';
+      }
+
+      // Node Training
+      const nTraining = document.getElementById('node-training');
+      const pTraining = document.getElementById('pill-training');
+      if (payload.leaderboard && payload.leaderboard.length > 0) {
+        nTraining.className = 'dag-node-box completed';
+        pTraining.innerText = 'COMPLETE';
+      } else if (payload.error) {
+        nTraining.className = 'dag-node-box pending';
+        pTraining.innerText = 'FAILED';
+      }
+
+      // Node Fairness
+      const nFairness = document.getElementById('node-fairness');
+      const pFairness = document.getElementById('pill-fairness');
+      if (payload.fairness_report !== undefined) {
+        nFairness.className = 'dag-node-box completed';
+        pFairness.innerText = 'COMPLETE';
+      }
+
+      // Node Gate
+      const nGate = document.getElementById('node-gate');
+      const pGate = document.getElementById('pill-gate');
+      if (isPaused) {
+        nGate.className = 'dag-node-box awaiting';
+        pGate.innerText = 'AWAITING DECISION';
+      } else {
+        nGate.className = 'dag-node-box completed';
+        pGate.innerText = 'RESOLVED';
+      }
+    }
+
+    function renderPipelineResults(data) {
+      currentThreadId = data.thread_id;
+      document.getElementById('run-id-display').innerText = currentThreadId;
+
+      // Update Tracker Steps & DAG Topology Nodes
+      document.querySelectorAll('.dag-step').forEach(s => s.classList.add('done'));
+      updateDAGTopologyNodes(data);
+
+      if (data.status === 'paused') {
+        document.getElementById('decision-card').style.display = 'block';
+        document.getElementById('step-approval').className = 'dag-step active';
+      } else {
+        document.getElementById('decision-card').style.display = 'none';
+      }
+
+      const payload = data.review_payload || {};
+      const plan = payload.plan_summary || {};
+      const quality = payload.quality_report || {};
+
+      // Render Planner
+      document.getElementById('plan-reasoning').innerText = plan.reasoning || 'N/A';
+      document.getElementById('plan-concerns').innerHTML = (plan.data_quality_concerns || []).map(c => `<li>${c}</li>`).join('') || '<li>None</li>';
+      document.getElementById('plan-models').innerHTML = (plan.recommended_models || []).map(m => `<li>${m}</li>`).join('') || '<li>None</li>';
+      document.getElementById('plan-steps').innerHTML = (plan.recommended_preprocessing_steps || []).map(s => `<li>${s}</li>`).join('') || '<li>None</li>';
+      document.getElementById('plan-sensitive').innerHTML = (plan.sensitive_attribute_candidates || []).map(a => `<li>${a}</li>`).join('') || '<li style="color: var(--text-muted);">None identified</li>';
+
+      // Render Data
+      document.getElementById('data-missing').innerText = (quality.missing_pct_after_cleaning || 0) + '%';
+      document.getElementById('data-rows-dropped').innerText = quality.rows_dropped || 0;
+      document.getElementById('data-cols-dropped').innerText = (quality.columns_dropped || []).length;
+      document.getElementById('data-actions').innerHTML = (payload.data_agent_actions || []).map(a => `<li>${a}</li>`).join('');
+
+      // Render Leaderboard & KPI Block
+      const selectedModel = payload.selected_model_name;
+      const leaderboard = payload.leaderboard || [];
+      const isReg = selectedTaskType === 'regression';
+
+      if (selectedModel) {
+        document.getElementById('kpi-block').style.display = 'flex';
+        document.getElementById('winner-model-name').innerText = selectedModel;
+
+        const winnerEntry = leaderboard.find(m => m.model_name === selectedModel);
+        if (winnerEntry && winnerEntry.metrics) {
+          const met = winnerEntry.metrics;
+          if (isReg) {
+            document.getElementById('primary-metric-label').innerText = 'RMSE (↓)';
+            document.getElementById('primary-metric-val').innerText = (met.rmse !== undefined && met.rmse !== null) ? Number(met.rmse).toFixed(4) : 'N/A';
+          } else {
+            document.getElementById('primary-metric-label').innerText = 'ACCURACY';
+            document.getElementById('primary-metric-val').innerText = (met.accuracy !== undefined && met.accuracy !== null) ? Number(met.accuracy).toFixed(4) : ((met.f1 !== undefined && met.f1 !== null) ? Number(met.f1).toFixed(4) : 'N/A');
+          }
+        } else {
+          document.getElementById('primary-metric-val').innerText = 'N/A';
+        }
+      } else {
+        document.getElementById('kpi-block').style.display = 'none';
+      }
+      
+      document.getElementById('leaderboard-thead').innerHTML = isReg ?
+        `<th>Rank</th><th>Model Name</th><th>Selection</th><th>RMSE (↓)</th><th>MAE (↓)</th><th>R² (↑)</th><th>Status</th>` :
+        `<th>Rank</th><th>Model Name</th><th>Selection</th><th>Accuracy</th><th>F1 Score</th><th>AUC-ROC</th><th>Status</th>`;
+
+      if (!leaderboard || leaderboard.length === 0) {
+        const errMsg = payload.error || "No models trained successfully.";
+        document.getElementById('leaderboard-tbody').innerHTML = `
+          <tr>
+            <td colspan="7" style="text-align: center; color: var(--accent-red); font-weight: 600; padding: 20px;">
+              ⚠️ ${errMsg}<br>
+              <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: normal;">
+                Hint: If your target column contains continuous decimal numbers (like Unemployment), please select <strong>Regression</strong> task type in Step 1.
+              </span>
+            </td>
+          </tr>
+        `;
+      } else {
+        document.getElementById('leaderboard-tbody').innerHTML = leaderboard.map((m, idx) => {
+          const met = m.metrics || {};
+          const isWinner = m.model_name === selectedModel;
+          return `
+            <tr>
+              <td>${idx + 1}</td>
+              <td><strong>${m.model_name}</strong></td>
+              <td>${isWinner ? '<span class="badge badge-winner">⭐ Winner</span>' : ''}</td>
+              <td>${isReg ? (met.rmse ?? 'N/A') : (met.accuracy ?? 'N/A')}</td>
+              <td>${isReg ? (met.mae ?? 'N/A') : (met.f1 ?? 'N/A')}</td>
+              <td>${isReg ? (met.r2 ?? 'N/A') : (met.auc_roc ?? 'N/A')}</td>
+              <td><span class="badge ${m.trained_successfully ? 'badge-pass' : 'badge-fail'}">${m.trained_successfully ? 'Trained' : 'Failed'}</span></td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      // Render Fairness
+      const fairness = payload.fairness_report || [];
+      const overallPassed = payload.overall_fairness_passed;
+      if (fairness.length === 0) {
+        document.getElementById('fairness-status-badge').innerHTML =
+          '<span class="badge" style="background: rgba(107, 114, 128, 0.2); color: #9ca3af; padding: 6px 12px; font-size: 0.85rem;">⚪ FAIRNESS ASSESSMENT: NO SENSITIVE ATTRIBUTES EVALUATED</span>';
+      } else {
+        document.getElementById('fairness-status-badge').innerHTML = overallPassed ?
+          '<span class="badge badge-pass" style="padding: 6px 12px; font-size: 0.85rem;">🟢 OVERALL FAIRNESS: PASSED (ALL ATTRIBUTES CLEARED)</span>' :
+          '<span class="badge badge-fail" style="padding: 6px 12px; font-size: 0.85rem;">🔴 OVERALL FAIRNESS: VIOLATION DETECTED</span>';
+      }
+
+      document.getElementById('fairness-tbody').innerHTML = fairness.length ? fairness.map(f => `
+        <tr>
+          <td><strong>${f.attribute}</strong></td>
+          <td><span class="badge ${f.violation ? 'badge-fail' : 'badge-pass'}">${f.violation ? '🔴 VIOLATION' : '🟢 PASSED'}</span></td>
+          <td>${f.disparate_impact}</td>
+          <td>${f.demographic_parity_difference}</td>
+          <td>${f.group_details ? `Max: ${f.group_details.group_a} vs Min: ${f.group_details.group_b}` : 'N/A'}</td>
+        </tr>
+      `).join('') : '<tr><td colspan="5" style="text-align:center; color: var(--text-muted);">No sensitive attribute violations evaluated</td></tr>';
+
+      // Fetch Audit Log
+      fetchAuditTrail(currentThreadId);
+    }
+
+    async function fetchAuditTrail(threadId) {
+      try {
+        const res = await fetch(`/api/pipeline/audit/${threadId}`);
+        const data = await res.json();
+        const entries = data.entries || [];
+        document.getElementById('audit-trail-list').innerHTML = entries.map(e => `
+          <div class="audit-item">
+            <div class="audit-header">
+              <strong>${e.event_source === 'human_reviewer' ? '👤' : '🤖'} ${e.event_type}</strong>
+              <span class="audit-time">${e.timestamp}</span>
+            </div>
+            <div>${e.summary}</div>
+          </div>
+        `).join('');
+      } catch (err) {
+        console.error("Audit log error:", err);
+      }
+    }
+  </script>
+</body>
+</html>

@@ -28,15 +28,35 @@ Optional override:
                        - llama-3.1-8b-instant
 """
 
-from __future__ import annotations
-
 import json
 import os
 import textwrap
+from pathlib import Path
 from typing import Literal, Optional
 
 import pandas as pd
 from groq import Groq
+
+# ---------------------------------------------------------------------------
+# Environment loader (single source of truth for local execution)
+# ---------------------------------------------------------------------------
+
+
+def _ensure_groq_api_key():
+    """Ensure GROQ_API_KEY is populated from local .env if not set in environment."""
+    if os.environ.get("GROQ_API_KEY"):
+        return
+    env_path = Path(__file__).resolve().parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_ensure_groq_api_key()
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -98,8 +118,22 @@ def _build_dataset_summary(
         "shape": {"rows": n_rows, "columns": n_cols},
         "target_column": target_column,
         "task_type": task_type,
-        "columns": columns_info,
     }
+
+    # Cap column metadata entries to prevent Groq token limit / 413 error on large datasets
+    if len(columns_info) > 40:
+        target_cols = [c for c in columns_info if c["name"] == target_column]
+        sensitive_cols = [c for c in columns_info if any(kw in c["name"].lower() for kw in SENSITIVE_KEYWORDS)]
+        high_null_cols = [c for c in columns_info if c["null_pct"] > 5.0]
+
+        priority_names = {c["name"] for c in target_cols + sensitive_cols + high_null_cols}
+        remaining = [c for c in columns_info if c["name"] not in priority_names]
+
+        selected_cols = [c for c in columns_info if c["name"] in priority_names] + remaining[:max(0, 40 - len(priority_names))]
+        summary["columns"] = selected_cols
+        summary["columns_truncated_note"] = f"Total columns: {n_cols}. Showing {len(selected_cols)} representative columns."
+    else:
+        summary["columns"] = columns_info
 
     # --- Pre-compute quality flags deterministically (no LLM involved) ---
     # These are passed to the LLM with an explicit instruction to include
@@ -294,9 +328,10 @@ def plan_pipeline(
     target_column: str,
     task_type: Literal["classification", "regression"],
     failure_context: Optional[dict] = None,
+    business_objective: str = "",
 ) -> dict:
     """
-    Analyse a dataset and return a structured ML pipeline plan via the Groq LLM.
+    Generate a validated, JSON-serialisable pipeline plan for a dataset.
 
     Parameters
     ----------
@@ -310,22 +345,19 @@ def plan_pipeline(
     failure_context : Optional[dict], optional
         If provided (on a retry from LangGraph), this dict is appended to the
         LLM prompt so the planner can produce a genuinely revised plan.
-        Expected keys match the quality_report from run_data_agent():
-        missing_pct_after_cleaning, rows_dropped_pct, columns_dropped, etc.
-        When None (default), behaviour is identical to the original function.
+    business_objective : str, optional
+        Optional user-defined business objective or domain constraint (e.g.
+        "Maximize recall on high income", "Ensure strict fairness across gender/race").
 
     Returns
     -------
     dict
         Keys: data_quality_concerns, recommended_preprocessing_steps,
         recommended_models, sensitive_attribute_candidates, reasoning.
-
-    Raises
-    ------
-    ValueError
-        If GROQ_API_KEY is missing, task_type is invalid, target_column is
-        absent, or the LLM fails to return a valid plan after 2 attempts.
     """
+    # Auto-load .env if GROQ_API_KEY is not already in environment
+    _ensure_groq_api_key()
+
     # --- Input validation ---
     if task_type not in ("classification", "regression"):
         raise ValueError(
@@ -341,7 +373,7 @@ def plan_pipeline(
     if not api_key:
         raise ValueError(
             "GROQ_API_KEY environment variable is not set. "
-            "Export it before calling plan_pipeline()."
+            "Please add GROQ_API_KEY to your .env file or environment."
         )
 
     model = os.environ.get("GROQ_MODEL", DEFAULT_GROQ_MODEL)
@@ -350,6 +382,14 @@ def plan_pipeline(
     # --- Build compact summary (no raw data) ---
     summary = _build_dataset_summary(df, target_column, task_type)
     system_prompt, user_prompt = _build_prompts(summary)
+
+    # --- Inject optional business objective ---
+    if business_objective and business_objective.strip():
+        biz_note = (
+            f"\nBusiness objective provided by user: {business_objective.strip()}\n"
+            "Please ensure your preprocessing steps, model choices, and governance reasoning align with this objective."
+        )
+        system_prompt = system_prompt + biz_note
 
     # --- Inject failure context on retry (backward-compatible: skipped when None) ---
     # IMPORTANT: inject into the SYSTEM prompt as a concise plain-text note —

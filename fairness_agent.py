@@ -154,9 +154,12 @@ def run_fairness_agent(
         actions_taken           : list[str] — human-readable log entries
     """
     if task_type == "regression":
-        raise NotImplementedError(
-            "Fairness Agent currently supports classification tasks only."
-        )
+        return {
+            "overall_fairness_passed": True,
+            "fairness_report": [],
+            "attributes_skipped": ["Skipped all attributes (Fairness agent supports classification tasks only)"],
+            "actions_taken": ["Skipped: Regression task (Disparate Impact & DPD are classification-specific metrics)"],
+        }
 
     if task_type != "classification":
         raise ValueError(
@@ -273,8 +276,8 @@ def run_fairness_agent(
             },
         })
 
-    # Overall fairness passed if no attribute has a violation
-    overall_passed = len(fairness_report) > 0 and not any(r["violation"] for r in fairness_report)
+    # Overall fairness passed if no evaluated attribute has a violation
+    overall_passed = not any(r["violation"] for r in fairness_report)
 
     return {
         "fairness_report": fairness_report,

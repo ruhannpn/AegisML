@@ -142,3 +142,5 @@ class PipelineState(TypedDict, total=False):
     human_decision: Optional[str]
     rejection_reroute_count: int
     unresolved_human_rejection: bool
+    business_objective: Optional[str]
+    rejected_models: Optional[list[str]]
