@@ -22,40 +22,36 @@
 
 ## 🔄 Multi-Agent DAG Topology & Looping Mechanics
 
-### Pipeline Flow Diagram
+### Pipeline Architecture Flowchart
 
-```text
-[START: User CSV Upload + Target Column & Task Selection]
-                          │
-                          ▼
-             [1. Data Analysis Agent]
-   (EDA profiling, IQR outliers, Pearson correlations, Chart.js)
-                          │
-                          ▼
-               [2. Planner Agent]  <───────────────────────────┐
-     (Groq LLM generates JSON plan & strategy)               │
-                          │                                     │ [LOOP 1: Auto Quality Retry]
-                          ▼                                     │ (Data Agent Quality Fail)
-                [3. Data Agent] ────────────────────────────────┘
-   (Imputation, frequency encoding, feature scaling)
-                          │
-                          ▼
-              [4. Training Agent]  <───────────────────────────┐
-   (RandomForest, XGBoost, LabelEncoder, SHAP)                  │
-                          │                                     │ [LOOP 3: Human Model Exclusion]
-                          ▼                                     │ (reject_model_or_fairness)
-              [5. Fairness Agent]                               │
-   (Disparate Impact >= 0.80 & Parity Diff <= 0.10)             │
-                          │                                     │
-                          ▼                                     │
-            [6. Governance Gate Node] ──────────────────────────┤
-     (Pauses execution via LangGraph interrupt)                 │
-              │                       │                         │
-              │                       │ [LOOP 2: Human Directives]
-              │ Approve               └─────────────────────────┘
-              ▼                       (reject_data_quality + human_feedback)
-     [END: Approved Deployment]
-   (Logs state & saves model artifact to disk)
+```mermaid
+flowchart TD
+    START(["START: USER CSV UPLOAD + TARGET COLUMN & TASK SELECTION"]) --> EDA["[1. Data Analysis Agent]<br/>EDA profiling, IQR outliers, Pearson correlations, Chart.js"]
+    EDA --> PLAN["[2. Planner Agent]<br/>Groq LLM generates JSON plan & strategy"]
+    PLAN --> DATA["[3. Data Agent]<br/>Imputation, frequency encoding, feature scaling"]
+    DATA --> CHECK{"Quality Check Passed?"}
+    
+    CHECK -- "No, Retry Count < 2<br/>[LOOP 1: Auto Quality Retry]<br/>(Data Agent Quality Fail, Pass last_failure_reason)" --> PLAN
+    CHECK -- "Yes" --> TRAIN["[4. Training Agent]<br/>RandomForest, XGBoost, LabelEncoder, SHAP"]
+    
+    TRAIN --> FAIR["[5. Fairness Agent]<br/>Disparate Impact >= 0.80 & Parity Diff <= 0.10"]
+    FAIR --> GATE["[6. Governance Gate Node]<br/>Pauses execution via LangGraph interrupt"]
+    
+    GATE --> DECISION{"Reviewer Decision?"}
+    
+    DECISION -- "Approve" --> END(["[END: APPROVED DEPLOYMENT]<br/>Logs state to audit_log.db & saves model"])
+    DECISION -- "Reject - Data Quality Concerns<br/>[LOOP 2: Human Directives]<br/>(reject_data_quality + human_feedback)" --> PLAN
+    DECISION -- "Reject - Model Choice / Fairness<br/>[LOOP 3: Human Model Exclusion]<br/>(reject_model_or_fairness, Append rejected_models)" --> TRAIN
+
+    classDef startNode fill:#7c3aed,stroke:#6366f1,stroke-width:2px,color:#fff;
+    classDef agentNode fill:#1e293b,stroke:#6366f1,stroke-width:2px,color:#fff;
+    classDef gateNode fill:#371e00,stroke:#f59e0b,stroke-width:2px,color:#fff;
+    classDef endNode fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff;
+    
+    class START startNode;
+    class EDA,PLAN,DATA,TRAIN,FAIR agentNode;
+    class GATE,CHECK,DECISION gateNode;
+    class END endNode;
 ```
 
 ### 6 Pipeline Agent Nodes
