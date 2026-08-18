@@ -1,0 +1,144 @@
+"""
+graph_state.py
+==============
+Shared LangGraph state schema for the AI-Governed Multi-Agent Platform.
+
+DESIGN NOTE — why DataFrames are stored as bytes, not directly:
+  LangGraph's MemorySaver serialises ALL state values using msgpack, even
+  for in-memory operation. pd.DataFrame is not msgpack-serialisable, so
+  DataFrames must be converted to bytes before entering the state.
+
+  We use pickle for this conversion because:
+    - Pickle preserves all pandas dtypes faithfully (object, float64, bool,
+      nullable string, etc.) with no roundtrip conversion issues.
+    - Pickle bytes are plain Python bytes objects — fully msgpack-safe.
+    - For in-memory, single-process use (MemorySaver), pickle's security
+      limitations are irrelevant (we are pickling our own DataFrames).
+
+  Helper functions df_to_bytes() / bytes_to_df() in this module handle the
+  conversion so nodes stay readable.
+
+  When we switch to a persistent checkpointer (SQLite/Postgres), we can
+  swap pickle for parquet and update only the two helper functions.
+"""
+
+from __future__ import annotations
+
+import io
+import pickle
+from typing import Optional
+
+import joblib
+import pandas as pd
+from typing_extensions import TypedDict
+
+
+# ---------------------------------------------------------------------------
+# DataFrame serialisation helpers
+# ---------------------------------------------------------------------------
+
+
+def df_to_bytes(df: pd.DataFrame) -> bytes:
+    """Serialise a DataFrame to bytes for safe storage in LangGraph state."""
+    return pickle.dumps(df)
+
+
+def bytes_to_df(b: bytes) -> pd.DataFrame:
+    """Deserialise bytes back to a DataFrame."""
+    return pickle.loads(b)
+
+
+def model_to_bytes(model: object) -> bytes:
+    """
+    Serialise a fitted sklearn/XGBoost model to bytes using joblib.
+
+    joblib is preferred over pickle for model objects because:
+      - It handles large numpy arrays efficiently (memory-mapped compression).
+      - It is the standard used by sklearn itself in its persistence docs.
+      - Bytes output is plain Python bytes — fully msgpack-safe for MemorySaver.
+    """
+    buf = io.BytesIO()
+    joblib.dump(model, buf)
+    return buf.getvalue()
+
+
+def bytes_to_model(b: bytes) -> object:
+    """Deserialise a fitted model from bytes produced by model_to_bytes()."""
+    buf = io.BytesIO(b)
+    return joblib.load(buf)
+
+
+# ---------------------------------------------------------------------------
+# State schema
+# ---------------------------------------------------------------------------
+
+
+class PipelineState(TypedDict, total=False):
+    """
+    Shared state passed between every node in the pipeline graph.
+
+    Fields
+    ------
+    df_bytes : bytes
+        The raw input dataset, pickled. Deserialise with bytes_to_df().
+        Never mutated after initial construction.
+    target_column : str
+        Name of the target/label column.
+    task_type : str
+        "classification" or "regression".
+    plan : Optional[dict]
+        Plan returned by plan_pipeline(). Set by planner_node.
+    data_agent_result : Optional[dict]
+        Return value of run_data_agent() WITH cleaned_df removed
+        (cleaned_df is stored separately as cleaned_df_bytes).
+        Contains: quality_check_passed, quality_report, actions_taken.
+    cleaned_df_bytes : Optional[bytes]
+        The cleaned DataFrame from data_agent_node, pickled.
+        Deserialise with bytes_to_df(). Used by training_node.
+    last_failure_reason : Optional[dict]
+        Populated with quality_report when quality_check_passed = False.
+        Passed as failure_context to plan_pipeline() on the next retry.
+    retry_count : int
+        Number of planner→data_agent cycles completed. Starts at 0.
+    unresolved_quality_issue : bool
+        True when retry_count >= MAX_RETRIES and quality still fails.
+        Prevents silent failures — downstream consumers must check this.
+    training_result : Optional[dict]
+        Return value of run_training_agent() with the fitted model object
+        stripped out (leaderboard, selected_model_name, selected_model_metrics,
+        shap_summary, actions_taken). All values are plain Python — no special
+        serialisation needed.
+    selected_model_bytes : Optional[bytes]
+        The fitted selected model, serialised with joblib via model_to_bytes().
+        Deserialise with bytes_to_model(). Stored separately to keep
+        training_result cleanly serialisable (same pattern as cleaned_df_bytes).
+    fairness_result : Optional[dict]
+        Return value of run_fairness_agent() (fairness_report,
+        overall_fairness_passed, attributes_skipped, actions_taken).
+        All values are plain Python — no special serialisation needed.
+    human_decision : Optional[str]
+        Decision returned by Human Approval gate ("approve", "reject_data_quality",
+        "reject_model_or_fairness", or None if not yet reached).
+    rejection_reroute_count : int
+        Number of human-triggered rejection reroutes executed. Starts at 0.
+        Independent counter from retry_count (Data Agent retry cap).
+    unresolved_human_rejection : bool
+        True when rejection_reroute_count >= MAX_HUMAN_REROUTES and human rejects again.
+        Prevents infinite human-rejection loops.
+    """
+
+    df_bytes: bytes
+    target_column: str
+    task_type: str
+    plan: Optional[dict]
+    data_agent_result: Optional[dict]
+    cleaned_df_bytes: Optional[bytes]
+    last_failure_reason: Optional[dict]
+    retry_count: int
+    unresolved_quality_issue: bool
+    training_result: Optional[dict]
+    selected_model_bytes: Optional[bytes]
+    fairness_result: Optional[dict]
+    human_decision: Optional[str]
+    rejection_reroute_count: int
+    unresolved_human_rejection: bool

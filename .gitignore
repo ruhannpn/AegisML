@@ -1,0 +1,25 @@
+# Environment & Secret Keys (CRITICAL: never commit API keys)
+.env
+.env.*
+*.env
+
+# Virtual Environment
+.venv/
+env/
+venv/
+
+# SQLite databases & temp state files generated at runtime
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE & System files
+.DS_Store
+.vscode/
+.idea/
