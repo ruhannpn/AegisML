@@ -552,6 +552,7 @@ def build_eda_linkage(
     eda_actions = {a.get("finding_id"): a for a in (data_res.get("eda_actions") or [])}
     winsorized = set(data_res.get("winsorized_columns") or [])
     dropped = set((data_res.get("quality_report") or {}).get("columns_dropped") or [])
+    engineered = set(data_res.get("engineered_features") or [])
     attached = {w.get("id") for w in ((fairness_result or {}).get("proxy_warnings") or [])}
 
     linked = []
@@ -594,6 +595,10 @@ def build_eda_linkage(
             if acted_drop:
                 outcomes.append({"stage": "data_agent", "status": "applied",
                                  "detail": f"Dropped {', '.join(acted_drop)}."})
+            acted_eng = [c for c in columns if any(e.startswith(f"{c}_") for e in engineered)]
+            if acted_eng:
+                outcomes.append({"stage": "data_agent", "status": "applied",
+                                 "detail": f"Engineered features for {', '.join(acted_eng)}."})
 
         else:
             outcomes.append({"stage": "reviewer", "status": "flagged",

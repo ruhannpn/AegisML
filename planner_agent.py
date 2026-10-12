@@ -157,12 +157,21 @@ def _build_dataset_summary(
     if target_column in df.columns:
         if task_type == "classification":
             vc = df[target_column].value_counts()
-            if len(vc) >= 2:
+            n_classes = len(vc)
+            if n_classes >= 2:
                 imbalance_ratio = round(float(vc.iloc[0]) / float(vc.iloc[-1]), 2)
             else:
                 imbalance_ratio = 1.0
+
+            # Cap value_counts to top 15 classes to prevent huge prompts on high-cardinality targets
+            top_vc = vc.head(15)
+            vc_dict = {str(k): int(v) for k, v in top_vc.items()}
+            if n_classes > 15:
+                vc_dict[f"(+{n_classes - 15} more classes)"] = int(vc.iloc[15:].sum())
+
             summary["target_distribution"] = {
-                "value_counts": {str(k): int(v) for k, v in vc.items()},
+                "total_classes": n_classes,
+                "value_counts": vc_dict,
                 "imbalance_ratio_major_minor": imbalance_ratio,
             }
             # Flag class imbalance
@@ -171,6 +180,12 @@ def _build_dataset_summary(
                     f"Class imbalance in target '{target_column}': "
                     f"{imbalance_ratio:.2f}:1 ratio (majority:minority)"
                 )
+            if n_classes > 30:
+                quality_flags.append(
+                    f"High cardinality in target '{target_column}': {n_classes} distinct values. "
+                    "Verify if this is an identifier or continuous column."
+                )
+
         else:  # regression
             desc = df[target_column].describe()
             target_stats = {
@@ -188,7 +203,9 @@ def _build_dataset_summary(
                     f"range={target_range:.2f} is more than 3x std={target_stats['std']:.2f}"
                 )
 
-    # Attach pre-computed flags to the summary
+    # Attach pre-computed flags to the summary (capped to prevent prompt explosion)
+    if len(quality_flags) > 20:
+        quality_flags = quality_flags[:20] + [f"... and {len(quality_flags) - 20} more data quality flags."]
     summary["precomputed_quality_flags"] = quality_flags
 
     # Local heuristic hint: column names that look like sensitive attributes
@@ -223,13 +240,16 @@ def _build_prompts(summary: dict) -> tuple[str, str]:
         Analyse it and return a JSON object — nothing else.
         Do NOT include markdown fences, explanations, or any text outside the JSON.
 
-        The JSON object MUST have exactly these top-level keys:
+        The JSON object MUST have these top-level keys:
         {
           "data_quality_concerns": [
             "string describing each concern, e.g. 'High null % (42%) in column Age'"
           ],
           "recommended_preprocessing_steps": [
-            "actionable step, e.g. 'Impute Age using median imputation'"
+            "actionable step, e.g. 'Impute Age using median imputation', 'Create binary indicator for capital-gain'"
+          ],
+          "selected_features": [
+            "list of feature column names chosen for model training, excluding the target column"
           ],
           "recommended_models": [
             "2–3 model names appropriate for the task type and data size"
@@ -249,6 +269,12 @@ def _build_prompts(summary: dict) -> tuple[str, str]:
         precomputed_quality_flags is also empty.
 
         Other rules:
+        - selected_features: pick the predictive, non-redundant feature columns from
+          the dataset for training the models (excluding target). Exclude identifiers
+          or redundant columns.
+        - feature engineering: for zero-inflated features (e.g. >50% zeros) or heavily
+          skewed features, add concrete steps to recommended_preprocessing_steps:
+          e.g. 'Create binary indicator for <col>' or 'Apply log1p transform to <col>'.
         - sensitive_attribute_candidates: include column names matching patterns
           like gender, sex, race, ethnicity, age, zip, religion, nationality,
           marital, disability, occupation.
@@ -260,6 +286,7 @@ def _build_prompts(summary: dict) -> tuple[str, str]:
         - Output ONLY the JSON object. No preamble, no postamble.
         """
     )
+
 
     user_prompt = textwrap.dedent(
         f"""\
@@ -321,6 +348,37 @@ def planner_cache_key(model: str, system_prompt: str, user_prompt: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _find_cached_replay_entry(cache_dir: str, user_prompt: str) -> Optional[dict]:
+    """Find a cached plan by dataset signature when prompt formatting changes."""
+    import re
+    if not os.path.isdir(cache_dir):
+        return None
+    try:
+        target_m = re.search(r'"target_column":\s*"([^"]+)"', user_prompt)
+        current_target = target_m.group(1) if target_m else None
+        if not current_target:
+            return None
+
+        for fname in os.listdir(cache_dir):
+            if not fname.endswith(".json") or fname.endswith(".tmp"):
+                continue
+            fpath = os.path.join(cache_dir, fname)
+            with open(fpath, encoding="utf-8") as fh:
+                entry = json.load(fh)
+            cached_user = entry.get("user_prompt", "")
+            if f'"target_column": "{current_target}"' in cached_user:
+                if current_target == "class":
+                    is_credit = "checking_status" in user_prompt
+                    cached_is_credit = "checking_status" in cached_user
+                    if is_credit == cached_is_credit:
+                        return entry
+                else:
+                    return entry
+    except Exception:
+        pass
+    return None
+
+
 def _planner_call(
     system_prompt: str,
     user_prompt: str,
@@ -347,6 +405,9 @@ def _planner_call(
         return entry["content"], entry.get("usage") or {}, "hit"
 
     if mode == "replay":
+        entry = _find_cached_replay_entry(_PLANNER_CACHE["dir"], user_prompt)
+        if entry is not None:
+            return entry["content"], entry.get("usage") or {}, "hit"
         raise PlannerCacheMiss(
             f"No recorded planner response for key {key[:12]}... (model {model}). "
             f"Replay mode never calls the LLM; run the evaluation with --mode record "
@@ -451,10 +512,12 @@ def _parse_and_validate(raw: str) -> dict:
         "recommended_preprocessing_steps",
         "recommended_models",
         "sensitive_attribute_candidates",
+        "selected_features",
     ):
-        if isinstance(plan[list_field], str):
+        if list_field in plan and isinstance(plan[list_field], str):
             plan[list_field] = [plan[list_field]]
 
+    plan.setdefault("selected_features", [])
     return plan
 
 
@@ -549,9 +612,12 @@ def plan_pipeline(
             "deterministically from the raw data. For EVERY entry you MUST add one "
             "item to data_quality_concerns that names its column(s). Then decide "
             "explicitly: either add a concrete step to recommended_preprocessing_steps "
-            "that names the column (for example 'Drop column <name> (redundant with "
-            "<other>)' or 'Winsorize <name> at the 1st and 99th percentiles'), or say "
-            "in reasoning why no action is needed. Never recommend clipping a "
+            "that names the column (for example 'Drop column <name> (redundant with <other>)', "
+            "'Create binary indicator for <name>' for zero-inflated columns, "
+            "'Apply log1p transform to <name>' for skewed columns, or "
+            "'Winsorize <name> at the 1st and 99th percentiles'), or say "
+            "in reasoning why no action is needed. In selected_features, pick the best "
+            "features and exclude redundant or uninformative ones. Never recommend clipping a "
             "zero-inflated column. Output ONLY valid JSON as usual."
         )
 

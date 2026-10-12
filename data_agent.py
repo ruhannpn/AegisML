@@ -103,6 +103,17 @@ def _resolve_thresholds(thresholds: dict | None) -> dict:
 CLIP_KEYWORDS = ("winsor", "clip", "capping", "cap outlier", "cap extreme")
 DROP_KEYWORDS = ("drop", "remove", "exclude")
 
+# Feature engineering keywords
+INDICATOR_KEYWORDS = (
+    "binary indicator", "non-zero indicator", "nonzero indicator",
+    "indicator feature", "is non-zero", "is_nonzero", "nonzero flag",
+    "binary flag", "indicator for", "indicator variable"
+)
+LOG_KEYWORDS = (
+    "log1p", "log transform", "log-transform", "logarithmic transform",
+    "take log", "log of", "apply log"
+)
+
 # Phrases that end the part of a clause a verb applies to. What follows them names
 # what to keep, or why: "Drop education-num and keep education", "Drop column
 # education-num (redundant with education)". Without the cut, the column the step
@@ -161,23 +172,18 @@ def _instruction_scope(clause: str) -> str:
     return clause[:cut]
 
 
-def _parse_plan_steps(steps: list[str], columns: list[str]) -> dict:
+def _parse_plan_steps(steps: list[str], columns: list[str], plan: dict | None = None) -> dict:
     """
-    Extract processing hints from the plan's free-text preprocessing steps via
-    keyword matching. Nothing here generates or executes code.
+    Extract processing hints from the plan's free-text preprocessing steps and
+    structured fields via keyword matching. Nothing here generates or executes code.
 
     Only UNCONDITIONAL instructions become actions. Each step is split into
     clauses on ";" and every clause is read on its own:
       - a hedged clause ("consider", "optionally", "if ...") is ignored;
-      - a drop or clip verb counts only if it appears BEFORE any scope terminator,
-        and applies only to columns named there;
+      - a drop, clip, indicator, or log verb counts only if it appears BEFORE any
+        scope terminator, and applies only to columns named there;
       - column names are matched longest first, so "education-num" is not also
         read as "education".
-
-    Every rule exists because the live planner wrote a step that the earlier
-    substring matcher misread — dropping both columns of a redundant pair, or
-    winsorizing a column the step said to keep as is. The exact phrasings are
-    pinned in tests/test_eda_insights.py.
     """
     hints = {
         "smote_mentioned": False,
@@ -185,7 +191,19 @@ def _parse_plan_steps(steps: list[str], columns: list[str]) -> dict:
         "frequency_encoding_mentioned": False,
         "explicit_drop_columns": [],
         "winsorize_columns": [],
+        "indicator_columns": [],
+        "log1p_columns": [],
+        "selected_features": [],
     }
+
+    # Extract structured selected_features if provided by planner
+    if plan and isinstance(plan.get("selected_features"), list):
+        valid_selected = [
+            str(c).strip() for c in plan["selected_features"]
+            if str(c).strip() in columns
+        ]
+        hints["selected_features"] = list(dict.fromkeys(valid_selected))
+
     for step in steps:
         sl = step.lower()
         if any(kw in sl for kw in ("smote", "oversample", "adasyn", "oversampl")):
@@ -202,11 +220,21 @@ def _parse_plan_steps(steps: list[str], columns: list[str]) -> dict:
             scope = _instruction_scope(padded)
             # Clip before drop: if a clause somehow names both verbs, take the
             # non-destructive reading.
-            if any(kw in scope for kw in CLIP_KEYWORDS):
+            if any(kw in scope for kw in INDICATOR_KEYWORDS):
+                hints["indicator_columns"].extend(columns_named_in(scope, columns))
+            elif any(kw in scope for kw in LOG_KEYWORDS):
+                hints["log1p_columns"].extend(columns_named_in(scope, columns))
+            elif any(kw in scope for kw in CLIP_KEYWORDS):
                 hints["winsorize_columns"].extend(columns_named_in(scope, columns))
             elif any(kw in scope for kw in DROP_KEYWORDS):
                 hints["explicit_drop_columns"].extend(columns_named_in(scope, columns))
+
+    hints["indicator_columns"] = list(dict.fromkeys(hints["indicator_columns"]))
+    hints["log1p_columns"] = list(dict.fromkeys(hints["log1p_columns"]))
+    hints["winsorize_columns"] = list(dict.fromkeys(hints["winsorize_columns"]))
+    hints["explicit_drop_columns"] = list(dict.fromkeys(hints["explicit_drop_columns"]))
     return hints
+
 
 
 # ---------------------------------------------------------------------------
@@ -472,6 +500,87 @@ def _impute_columns(
                 f"({null_count:,} nulls filled)"
             )
     return df
+
+
+def _engineer_features(
+    df: pd.DataFrame,
+    target_column: str,
+    indicator_cols: list[str],
+    log1p_cols: list[str],
+    actions: list[str],
+) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Deterministic feature engineering requested by the planner:
+    - Binary indicator (non-zero flag) for zero-inflated columns
+    - log1p transform (log(1 + max(0, x))) for skewed / heavy-tailed columns
+    """
+    df = df.copy()
+    engineered = []
+
+    # 1. Binary non-zero indicators
+    for col in indicator_cols:
+        if col in df.columns and col != target_column and pd.api.types.is_numeric_dtype(df[col]):
+            new_col = f"{col}_is_nonzero"
+            df[new_col] = (df[col] > 0).astype("float64")
+            engineered.append(new_col)
+            actions.append(
+                f"Feature engineering: created binary indicator '{new_col}' "
+                f"for zero-inflated feature '{col}' ({int((df[col] > 0).sum())} non-zero values)."
+            )
+
+    # 2. log1p transforms
+    for col in log1p_cols:
+        if col in df.columns and col != target_column and pd.api.types.is_numeric_dtype(df[col]):
+            new_col = f"{col}_log1p"
+            vals = np.maximum(0.0, df[col].astype("float64"))
+            df[new_col] = np.log1p(vals)
+            engineered.append(new_col)
+            actions.append(
+                f"Feature engineering: created log-transformed feature '{new_col}' "
+                f"for skewed feature '{col}' (using log1p on non-negative values)."
+            )
+
+    return df, engineered
+
+
+def _apply_feature_selection(
+    df: pd.DataFrame,
+    target_column: str,
+    selected_features: list[str],
+    engineered_features: list[str],
+    actions: list[str],
+) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Retain only the feature columns picked by the planner plus any newly engineered
+    features and the target column.
+    """
+    if not selected_features:
+        features_kept = [c for c in df.columns if c != target_column]
+        return df, features_kept
+
+    selected_set = {str(c).strip() for c in selected_features}
+    keep_cols = [
+        c for c in df.columns
+        if c in selected_set or c in engineered_features or c == target_column
+    ]
+
+    feature_cols = [c for c in keep_cols if c != target_column]
+    if len(feature_cols) < 1:
+        actions.append(
+            f"Feature selection warning: none of the planner's selected features {selected_features} "
+            f"matched available dataset columns. Retaining all features."
+        )
+        return df, [c for c in df.columns if c != target_column]
+
+    dropped_features = [c for c in df.columns if c not in keep_cols]
+    if dropped_features:
+        df = df[keep_cols]
+        actions.append(
+            f"Feature selection: retained {len(feature_cols)} feature(s) chosen by the planner "
+            f"(dropped {len(dropped_features)} unselected feature(s): {dropped_features[:4]}"
+            f"{'...' if len(dropped_features) > 4 else ''})."
+        )
+    return df, feature_cols
 
 
 def _label_encode_target(
@@ -754,6 +863,7 @@ def run_data_agent(
     hints = _parse_plan_steps(
         plan.get("recommended_preprocessing_steps", []),
         list(df.columns),
+        plan=plan,
     )
 
     # Step 0b — Drop columns exploratory analysis routed to the Data Agent
@@ -796,6 +906,16 @@ def run_data_agent(
     # Step 4b — Winsorize columns a plan step explicitly named (train-fitted bounds)
     df, winsorized = _winsorize_columns(
         df, target_column, hints["winsorize_columns"], actions, fit_index=train_idx,
+    )
+
+    # Step 4c — Feature engineering (binary indicators & log1p transforms)
+    df, engineered_features = _engineer_features(
+        df, target_column, hints["indicator_columns"], hints["log1p_columns"], actions,
+    )
+
+    # Step 4d — Feature selection (retain planner-picked features + engineered + target)
+    df, selected_features = _apply_feature_selection(
+        df, target_column, hints["selected_features"], engineered_features, actions,
     )
 
     # Step 5 — Label-encode target (classification only).
@@ -850,6 +970,8 @@ def run_data_agent(
         # exploratory insight was used.
         "eda_actions": eda_actions,
         "winsorized_columns": winsorized,
+        "engineered_features": engineered_features,
+        "selected_features": selected_features,
         # Index labels of the split drawn in step 3. Consumed by
         # pipeline_graph.data_agent_node, which lifts them out of this dict and
         # into PipelineState["split_index"] so they never reach the audit log

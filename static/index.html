@@ -345,16 +345,16 @@
         <div class="form-group">
           <label>Dataset</label>
           <div class="upload-zone" onclick="document.getElementById('csv-file').click()">
-            <div id="file-label" style="font-size: 0.9rem; font-weight: 600;">Choose a CSV file</div>
-            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">One header row, one column per feature</div>
+            <div id="file-label" style="font-size: 0.9rem; font-weight: 600;">Choose a dataset file</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">CSV, TSV, JSON, Parquet, Feather, Excel (.xlsx)</div>
           </div>
-          <input type="file" id="csv-file" accept=".csv" style="display: none;" onchange="handleFileSelect(event)">
+          <input type="file" id="csv-file" accept=".csv,.tsv,.tab,.txt,.json,.jsonl,.ndjson,.parquet,.pq,.feather,.arrow,.xlsx,.xls" style="display: none;" onchange="handleFileSelect(event)">
         </div>
 
         <div class="form-group">
           <label>Target column</label>
           <select id="target-col">
-            <option value="">Upload CSV to populate column options...</option>
+            <option value="">Upload dataset to populate column options...</option>
           </select>
         </div>
 
@@ -831,20 +831,52 @@
       }
     }
 
-    function handleFileSelect(e) {
+    async function handleFileSelect(e) {
       const file = e.target.files[0];
-      if (file) {
-        document.getElementById('file-label').innerText = file.name;
+      if (!file) return;
 
-        const reader = new FileReader();
-        reader.onload = function(evt) {
-          csvTextData = evt.target.result;
-          const firstLine = csvTextData.split('\n')[0];
-          if (firstLine) {
-            const cols = firstLine.split(',').map(c => c.trim().replace(/^["']|["']$/g, '')).filter(c => c.length > 0);
-            const targetSelect = document.getElementById('target-col');
-            targetSelect.innerHTML = cols.map(c => `<option value="${c}">${c}</option>`).join('');
+      document.getElementById('file-label').innerText = file.name;
+      const targetSelect = document.getElementById('target-col');
+      targetSelect.innerHTML = '<option value="">Analyzing dataset columns...</option>';
 
+      // Inspect via server endpoint for multi-format support
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/dataset/inspect', { method: 'POST', body: formData });
+        if (res.ok) {
+          const data = await res.json();
+          const cols = data.columns || [];
+          if (cols.length > 0) {
+            targetSelect.innerHTML = cols.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
+            if (data.suggested_target) {
+              targetSelect.value = data.suggested_target;
+            }
+            if (data.suggested_task) {
+              setTaskType(data.suggested_task);
+            }
+            targetSelect.onchange = function() { autoDetectTaskType(targetSelect.value); };
+            return;
+          }
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          console.warn('Backend inspect reported error:', errData.detail);
+        }
+      } catch (err) {
+        console.warn('Backend inspection network failure, trying client text fallback:', err);
+      }
+
+      // Fallback for plain text / CSV files if server inspect is offline
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        csvTextData = evt.target.result;
+        const firstLine = csvTextData.split('\n')[0];
+        if (firstLine) {
+          const delimiter = firstLine.includes('\t') ? '\t' : ',';
+          const cols = firstLine.split(delimiter).map(c => c.trim().replace(/^["']|["']$/g, '')).filter(c => c.length > 0);
+          if (cols.length > 0) {
+            targetSelect.innerHTML = cols.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
             targetSelect.onchange = function() { autoDetectTaskType(targetSelect.value); };
 
             let defaultCol = cols[cols.length - 1];
@@ -854,11 +886,14 @@
             }
             targetSelect.value = defaultCol;
             autoDetectTaskType(defaultCol);
+            return;
           }
-        };
-        reader.readAsText(file.slice(0, 65536));
-      }
+        }
+        targetSelect.innerHTML = '<option value="">Select target column...</option>';
+      };
+      reader.readAsText(file.slice(0, 65536));
     }
+
 
     function setTaskType(type) {
       selectedTaskType = type;
@@ -928,7 +963,7 @@
       const targetCol = document.getElementById('target-col').value.trim();
       const bizObj = document.getElementById('biz-obj').value.trim();
 
-      if (!fileInput.files[0]) { alert("Please select a CSV file."); return; }
+      if (!fileInput.files[0]) { alert("Please select a dataset file."); return; }
       if (!targetCol) { alert("Please enter the target column name."); return; }
 
       const formData = new FormData();

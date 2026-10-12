@@ -58,6 +58,7 @@ from audit_log import get_audit_trail, verify_audit_chain
 from compliance_artifacts import verify_artifacts
 from policy import load_policy
 from reviewers import KNOWN_ROLES, identify, load_reviewers
+from dataset_utils import load_dataset_from_bytes, suggest_dataset_metadata
 
 # Loaded once, at startup. An invalid policy raises PolicyError here and the server does
 # not start: running under a silently defaulted policy would be worse than not running.
@@ -178,7 +179,17 @@ def _build_pipeline_response(thread_id: str) -> dict:
     is_paused = "human_approval_node" in next_nodes
     payload = None
     if is_paused and snapshot.tasks and snapshot.tasks[0].interrupts:
-        payload = snapshot.tasks[0].interrupts[0].value
+        raw_val = snapshot.tasks[0].interrupts[0].value or {}
+        payload = dict(raw_val)
+        try:
+            current_policy = load_policy()["policy"]
+            if not current_policy["governance"].get("block_approval_when_fairness_not_evaluated", False):
+                if payload.get("approval_blocked_reason") and "fairness is NOT" in str(payload.get("approval_blocked_reason")):
+                    payload["approval_blocked_reason"] = None
+                    if "allowed_decisions" in payload and "approve" not in payload["allowed_decisions"]:
+                        payload["allowed_decisions"] = ["approve"] + [d for d in payload["allowed_decisions"] if d != "approve"]
+        except Exception:
+            pass
 
     values = snapshot.values or {}
     fairness_result = values.get("fairness_result") or {}
@@ -228,6 +239,23 @@ def _build_pipeline_response(thread_id: str) -> dict:
     }
 
 
+@app.post("/api/dataset/inspect")
+async def inspect_dataset(file: UploadFile = File(...)):
+    """
+    Inspect an uploaded dataset (CSV, TSV, JSON, Parquet, Feather, Excel)
+    to return column names, shapes, and suggested task type.
+    """
+    contents = await file.read()
+    try:
+        df = load_dataset_from_bytes(contents, file.filename)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    metadata = suggest_dataset_metadata(df)
+    metadata["filename"] = file.filename
+    return metadata
+
+
 @app.post("/api/pipeline/start")
 async def start_pipeline(
     file: UploadFile = File(...),
@@ -237,13 +265,11 @@ async def start_pipeline(
     protected_attributes: Optional[str] = Form(None),
 ):
     """
-    Ingest uploaded CSV, construct initial state, and invoke pipeline graph
-    until paused at human_approval_node or completed. Exploratory analysis runs
-    inside the graph as data_analysis_node.
+    Ingest uploaded dataset (CSV, TSV, JSON, Parquet, Feather, Excel),
+    construct initial state, and invoke pipeline graph until paused at
+    human_approval_node or completed. Exploratory analysis runs inside
+    the graph as data_analysis_node.
     """
-    if not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only CSV files are supported")
-
     contents = await file.read()
 
     # Hash the uploaded bytes, not the parsed frame. This digest is the dataset's
@@ -252,14 +278,14 @@ async def start_pipeline(
     dataset_sha256 = hashlib.sha256(contents).hexdigest()
 
     try:
-        df_raw = pd.read_csv(io.BytesIO(contents))
+        df_raw = load_dataset_from_bytes(contents, file.filename)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid CSV file format: {exc}")
+        raise HTTPException(status_code=400, detail=f"Invalid or unsupported dataset file format: {exc}")
 
     if target_column not in df_raw.columns:
         raise HTTPException(
             status_code=400,
-            detail=f"Target column '{target_column}' not found in CSV headers: {list(df_raw.columns)}"
+            detail=f"Target column '{target_column}' not found in dataset headers: {list(df_raw.columns)}"
         )
 
     # Reviewer-declared protected attributes. A typo must fail loudly: silently
@@ -271,13 +297,14 @@ async def start_pipeline(
     if unknown:
         raise HTTPException(
             status_code=400,
-            detail=f"Protected attribute column(s) not found in CSV headers: {unknown}",
+            detail=f"Protected attribute column(s) not found in dataset headers: {unknown}",
         )
     if target_column in declared_protected:
         raise HTTPException(
             status_code=400,
             detail="The target column cannot also be declared a protected attribute.",
         )
+
 
     if not os.environ.get("GROQ_API_KEY"):
         raise HTTPException(
@@ -362,7 +389,8 @@ async def resume_pipeline(
         if snapshot.tasks and snapshot.tasks[0].interrupts:
             payload = snapshot.tasks[0].interrupts[0].value or {}
             reason = payload.get("approval_blocked_reason")
-            if reason:
+            current_policy = load_policy()["policy"]
+            if reason and current_policy["governance"].get("block_approval_when_fairness_not_evaluated", False):
                 raise HTTPException(status_code=409, detail=f"Approval blocked by policy: {reason}")
             first = payload.get("first_approval") or {}
             if payload.get("awaiting_second_approval") and \

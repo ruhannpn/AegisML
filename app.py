@@ -38,6 +38,7 @@ if "GROQ_API_KEY" not in os.environ:
 from graph_state import df_to_bytes, bytes_to_df, bytes_to_model
 from pipeline_graph import graph
 from audit_log import get_audit_trail
+from dataset_utils import load_dataset_from_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -160,12 +161,15 @@ config = {"configurable": {"thread_id": thread_id}}
 
 st.subheader("1. Dataset & Pipeline Setup")
 
-uploaded_file = st.file_uploader("Upload CSV Dataset", type=["csv"])
+uploaded_file = st.file_uploader(
+    "Upload Dataset",
+    type=["csv", "tsv", "tab", "txt", "json", "jsonl", "ndjson", "parquet", "pq", "feather", "arrow", "xlsx", "xls"]
+)
 
 if uploaded_file is not None:
     try:
-        df_raw = pd.read_csv(uploaded_file)
-        st.success(f"Loaded CSV: **{len(df_raw):,}** rows × **{len(df_raw.columns)}** columns")
+        df_raw = load_dataset_from_bytes(uploaded_file.getvalue(), uploaded_file.name)
+        st.success(f"Loaded dataset: **{len(df_raw):,}** rows × **{len(df_raw.columns)}** columns")
 
         with st.expander("Preview Raw Dataset", expanded=False):
             st.dataframe(df_raw.head(10), use_container_width=True)

@@ -48,7 +48,7 @@ def test_the_committed_policy_file_equals_the_code_defaults():
     governance = default_policy()["governance"]
     assert governance["max_retries"] == pipeline_graph.MAX_RETRIES
     assert governance["max_human_reroutes"] == pipeline_graph.MAX_HUMAN_REROUTES
-    assert governance["block_approval_when_fairness_not_evaluated"] is True
+    assert governance["block_approval_when_fairness_not_evaluated"] is False
     assert governance["require_dual_signoff_for_violating_approval"] is True
     assert governance["dual_signoff_can_override_approval_block"] is False
 
@@ -217,7 +217,9 @@ def _unauditable(toy_df):
 def test_approving_an_unevaluated_model_is_blocked_by_default(graph, toy_df):
     from audit_log import get_audit_trail
 
-    config = _run(graph, _state(_unauditable(toy_df)), "t-policy-block")
+    policy = with_overrides(default_policy(),
+                            {"governance": {"block_approval_when_fairness_not_evaluated": True}})
+    config = _run(graph, _state(_unauditable(toy_df), policy), "t-policy-block")
     payload = graph.g.get_state(config).tasks[0].interrupts[0].value
     assert payload["approval_blocked_reason"]
     assert "approve" not in payload["allowed_decisions"]

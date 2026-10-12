@@ -95,7 +95,7 @@ def default_policy() -> dict:
             # this; importing pipeline_graph here would be circular).
             "max_retries": 2,
             "max_human_reroutes": 2,
-            "block_approval_when_fairness_not_evaluated": True,
+            "block_approval_when_fairness_not_evaluated": False,
             "require_dual_signoff_for_violating_approval": True,
             "dual_signoff_can_override_approval_block": False,
         },

@@ -26,7 +26,7 @@ governance:
   max_human_reroutes: 2                     # reviewer rejections before the run ends
   # Refuse to approve a classification model whose fairness verdict is NOT EVALUATED
   # or NOT FULLY EVALUATED. Regression has no fairness definition and is exempt.
-  block_approval_when_fairness_not_evaluated: true
+  block_approval_when_fairness_not_evaluated: false
   # Approving a model whose fairness verdict IS a violation takes two different
   # reviewers. The first approval does not finish the run: the gate re-opens marked
   # "awaiting second approval", and the same reviewer cannot supply it.

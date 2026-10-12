@@ -74,6 +74,7 @@ flowchart TD
 ### Pipeline stages
 
 1. **Data Analysis (`data_analysis_agent.py`, `eda_insights.py`).** The first graph node profiles the raw data for the dashboard, then derives structured **findings**, each routed to the stage allowed to act on it:
+
    - identifier and constant columns go to the **Data Agent**, which drops them;
    - zero-inflated or outlier-heavy features, redundant pairs and a skewed target go to the **Planner**, which must address each by name;
    - suspected target leakage and **proxy variables** for protected attributes (Cramér's V / correlation ratio) are held for the **human reviewer** and never sent to the LLM.
@@ -83,6 +84,7 @@ flowchart TD
 3. **Data Agent (`data_agent.py`).** Deterministic cleaning. After structural drops, it draws a stratified **train / validation / test split (64 / 16 / 20)** before fitting anything; imputation values, frequency-encoding maps, winsorisation bounds and the scaler are all learned from train rows only. The planner's text is read by keyword rules (clauses, hedges, scope terminators), never executed. Limits come from `policy.yaml`.
 4. **Training Agent (`training_agent.py`).** Trains the allowed models from the planner's recommendations (LogisticRegression, RandomForest, XGBoost, GradientBoosting; Ridge and Lasso for regression), ranks them on the **validation rows** and extracts top-5 SHAP features. It accepts per-row sample weights for mitigation. A run in which no model trains ends instead of reaching the gate.
 5. **Fairness Agent (`fairness_agent.py`).** Audits the model on the validation rows:
+
    - **Groups come from the raw uploaded values**, not the cleaned data, so scaled or encoded columns (COMPAS `sex`, Adult `occupation`) are still audited; missing values form their own group; `age` is banded (<25, 25–59, 60+); groups under 30 rows are excluded and listed.
    - **The verdict covers protected attributes only**: columns named like sex, race, age and similar, plus any the reviewer declares. Other columns the planner proposes are audited and shown as **advisory**.
    - An attribute violates when disparate impact is below 0.80 or demographic parity difference is above 0.10. Equal-opportunity and equalized-odds gaps are reported alongside.
@@ -117,6 +119,7 @@ as `http://localhost:8000/#run=<run id>&page=review&tab=tab-fairness`, where `pa
 `profile`, `review` or `audit`.
 
 ### 1. Setup
+
 Upload a CSV, choose the target column and task, and optionally name extra protected attributes
 (for example `personal_status`). The pipeline strip shows each stage's status; the panel beside it
 says what a run does.
@@ -124,6 +127,7 @@ says what a run does.
 ![Setup page](images/setup.png)
 
 ### 2. Data profile
+
 Dataset figures, then every exploratory finding with the stage it was routed to. Here
 `relationship` and `marital-status` stand in for `sex` and `age`, so they are held for the
 reviewer rather than sent to the LLM.
@@ -136,12 +140,14 @@ correlation chart is empty here because no pair of numeric Adult features reache
 ![Data profile: charts and column profile](images/data_profile_charts.png)
 
 ### 3. Planner proposal
+
 The LLM's reasoning, the data quality concerns it identified, the preprocessing it recommends
 and the attributes it considers sensitive. The Data Agent applies only its unconditional steps.
 
 ![Planner proposal](images/review_planner.png)
 
 ### 4. Leaderboard and your decision
+
 Models ranked on the validation rows. The run is paused until you approve, reject for data
 quality, reject the model, or ask for bias mitigation. Every decision is submitted under a
 reviewer id — and a token, if this server has a roster.
@@ -149,6 +155,7 @@ reviewer id — and a token, if this server has a roster.
 ![Leaderboard and decision panel](images/review_gate.png)
 
 ### 5. Fairness assessment
+
 The verdict covers protected attributes only. `age`, `sex` and `race` violate (solid white
 labels); `marital-status` and `occupation` are advisory (dashed); `native-country` could not be
 audited and is named. Below the table, combined subgroups such as `age × sex` are reported
@@ -157,12 +164,14 @@ without changing the verdict.
 ![Fairness assessment](images/review_fairness.png)
 
 ### 6. Bias mitigation
+
 After "Reject: mitigate bias", the next gate shows what was reweighted and the numbers before
 mitigation against now.
 
 ![Mitigation before and after](images/review_mitigation.png)
 
 ### 7. Second sign-off
+
 This model violates fairness on a protected attribute, so the first approval did not finish the
 run. The gate re-opens naming who approved and when; nothing has been saved, and the second
 sign-off has to come from a different reviewer.
@@ -170,6 +179,7 @@ sign-off has to come from a different reviewer.
 ![Gate awaiting a second sign-off](images/review_signoff.png)
 
 ### 8. Approved
+
 The second reviewer's approval saves the model, scores it once on the untouched test rows, and
 writes its model card, AIBOM and Annex IV draft. Each artifact's SHA-256 is checked against the
 audit chain, and the banner names both approvers.
@@ -177,6 +187,7 @@ audit chain, and the banner names both approvers.
 ![Approved run with compliance artifacts](images/approved.png)
 
 ### 9. Audit log
+
 Every event for the run, starting with the governance policy that applied, each hashed together
 with its predecessor. The banner re-verifies the chain.
 
@@ -228,6 +239,7 @@ python server.py
 ```
 
 Open your browser and navigate to:
+
 ```text
 http://localhost:8000
 ```
@@ -274,12 +286,12 @@ Created at runtime and gitignored: `.env`, `reviewers.yaml`, `pipeline_state.db`
 `experiments/run_governance_eval.py` drives the real pipeline end to end with a scripted
 reviewer: **4 datasets × 4 arms × 5 train/test split seeds = 80 runs**.
 
-| Arm | Reviewer |
-|---|---|
-| **A** governance off | No automatic data-quality retry; approve at the first gate |
-| **B** auto-retry | Automatic retry enabled; approve at the first gate |
-| **C** fairness reviewer | Reject the model while a fairness violation remains (up to 2 reroutes) and take the next-best model, otherwise approve |
-| **D** mitigation reviewer | As C, but each rejection is *reject and mitigate*: the same candidates are retrained with reweighing on the worst-violating protected attribute |
+| Arm                             | Reviewer                                                                                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **A** governance off      | No automatic data-quality retry; approve at the first gate                                                                                       |
+| **B** auto-retry          | Automatic retry enabled; approve at the first gate                                                                                               |
+| **C** fairness reviewer   | Reject the model while a fairness violation remains (up to 2 reroutes) and take the next-best model, otherwise approve                           |
+| **D** mitigation reviewer | As C, but each rejection is*reject and mitigate*: the same candidates are retrained with reweighing on the worst-violating protected attribute |
 
 **How the numbers are produced.** The Data Agent splits train / validation / test
 (64 / 16 / 20). Every gate decision — the leaderboard, the fairness audit, each rejection
@@ -292,12 +304,12 @@ similar); attributes the planner proposes that are not protected, such as `occup
 Means over 5 seeds, shown as **A/B · C · D**. Arms A and B were identical on every run, so
 they share a value.
 
-| Dataset | AUC (test rows) | Violated protected attributes | Min disparate impact | Max parity difference |
-|---|---|---|---|---|
-| UCI Adult (48,842) | 0.926 · 0.877 · 0.923 | 3.0 · 3.0 · 3.0 | 0.018 · 0.034 · 0.073 | 0.246 · 0.250 · 0.202 |
-| German Credit (1,000) ‡ | — | — | — | — |
-| Bank Marketing (45,211) | 0.746 · 0.724 · 0.742 | 1.0 · 1.0 · 1.0 | 0.177 · 0.146 · 0.239 | 0.127 · 0.206 · 0.083 |
-| COMPAS (5,278) | 0.724 · 0.666 · 0.709 | 4.0 · 3.6 · 3.2 | 0.184 · 0.364 · 0.416 | 0.619 · 0.391 · 0.231 |
+| Dataset                  | AUC (test rows)         | Violated protected attributes | Min disparate impact    | Max parity difference   |
+| ------------------------ | ----------------------- | ----------------------------- | ----------------------- | ----------------------- |
+| UCI Adult (48,842)       | 0.926 · 0.877 · 0.923 | 3.0 · 3.0 · 3.0             | 0.018 · 0.034 · 0.073 | 0.246 · 0.250 · 0.202 |
+| German Credit (1,000) ‡ | —                      | —                            | —                      | —                      |
+| Bank Marketing (45,211)  | 0.746 · 0.724 · 0.742 | 1.0 · 1.0 · 1.0             | 0.177 · 0.146 · 0.239 | 0.127 · 0.206 · 0.083 |
+| COMPAS (5,278)           | 0.724 · 0.666 · 0.709 | 4.0 · 3.6 · 3.2             | 0.184 · 0.364 · 0.416 | 0.619 · 0.391 · 0.231 |
 
 ‡ No German Credit model was approved. On every split the gate could not audit a protected
 attribute, and the governance policy blocks approving a model whose fairness was not
@@ -438,11 +450,13 @@ after writing its own result files, which is fixed here.
 Each audit entry stores `entry_hash = SHA-256(canonical(entry) + entry_hash_of_predecessor)`, anchored per run at a genesis constant.
 
 **Detected by `verify_audit_chain(run_id)`:**
+
 - Any edit to a logged field — summary, details, timestamp, `event_source`.
 - Deletion of an entry from the middle of a run.
 - Insertion of a forged entry, or reordering (the sequence number is hashed).
 
 **NOT detected — stated plainly rather than assumed away:**
+
 - **Truncation.** Deleting *trailing* entries leaves a shorter but internally consistent chain. Nothing inside the database can prove entries once existed beyond its own head.
 - **Deletion of an entire run.**
 - **Wholesale recomputation.** The chain is unsigned, so anyone who can write to the file can rebuild a valid chain over falsified content.
@@ -455,11 +469,11 @@ Closing those requires an anchor *outside* the file — periodically publishing 
 
 Approving a model writes `artifacts/<run_id>/`:
 
-| File | What it is |
-|---|---|
-| `model_card.md` / `.json` | Model details, intended use, training-data characteristics, held-out metrics, fairness results, SHAP features, who approved and under which policy, the full human decision history with the reviewer behind each decision, and explicit limitations |
-| `aibom.json` | AI Bill of Materials: dataset SHA-256, model SHA-256, Python and library versions, planner model id and prompt hashes, token usage, the approvers, the policy version and hash, and the audit chain head |
-| `technical_documentation.md` | Draft documentation laid out under the nine EU AI Act Annex IV headings |
+| File                           | What it is                                                                                                                                                                                                                                           |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model_card.md` / `.json`  | Model details, intended use, training-data characteristics, held-out metrics, fairness results, SHAP features, who approved and under which policy, the full human decision history with the reviewer behind each decision, and explicit limitations |
+| `aibom.json`                 | AI Bill of Materials: dataset SHA-256, model SHA-256, Python and library versions, planner model id and prompt hashes, token usage, the approvers, the policy version and hash, and the audit chain head                                             |
+| `technical_documentation.md` | Draft documentation laid out under the nine EU AI Act Annex IV headings                                                                                                                                                                              |
 
 The model card also lists every exploratory finding and how it was used.
 
@@ -543,24 +557,24 @@ pytest
 
 The suite in `tests/` is fully offline: synthetic fixtures, a stubbed planner, no Groq key and no network. **279 tests**, and a GitHub Actions workflow runs them on every push.
 
-| File | Tests | Covers |
-|---|---:|---|
-| `test_eda_insights.py` | 56 | Finding routes, proxy detection, plan-step parsing against real planner phrasings, a captured prompt proving reviewer findings never reach the LLM |
-| `test_governance_eval.py` | 44 | Record/replay cache, scripted reviewers for all four arms, metrics, CSV round trip, summaries, charts |
-| `test_fairness_groups.py` | 29 | Minimum group size, raw-value groups, age bands, protected-only verdict, declared attributes, coverage rule |
-| `test_policy.py` | 25 | Policy validation and hashing, thresholds changing behaviour, approval block, regression exemption |
-| `test_reviewers.py` | 15 | Roster validation, duplicate ids and reused tokens, hashed tokens, identification |
-| `test_graph_end_to_end.py` | 19 | Interrupt/resume, every reroute loop, caps, training failure, model saving, artifacts, audit chain |
-| `test_compliance_artifacts.py` | 18 | Artifact contents, NOT EVALUATED wording, digests, tamper detection |
-| `test_leakage.py` | 13 | Split before fit; parameters learned from train rows only |
-| `test_audit_chain.py` | 12 | Hash chain, edit/delete/reorder detection, the documented truncation gap |
-| `test_mitigation.py` | 12 | Weight arithmetic, train-only fitting, attribute choice, the graph path, the model card |
-| `test_validation_split.py` | 7 | Three-way split, gate on validation rows, one final scoring on test rows |
-| `test_intersectional.py` | 6 | Combined subgroups: hidden disparities, small combinations, never in the verdict |
-| `test_feature_names.py` | 5 | XGBoost-safe one-hot column names |
-| `test_fairness_honesty.py` | 3 | Unmeasured fairness never reported as passed |
-| `test_dual_signoff.py` | 13 | One approval is not an approval, self sign-off refused, two reviewers in the artifacts, the policy switches |
-| `test_completed_run.py` | 2 | A finished run keeps the payload its reviewer decided on |
+| File                             | Tests | Covers                                                                                                                                             |
+| -------------------------------- | ----: | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_eda_insights.py`         |    56 | Finding routes, proxy detection, plan-step parsing against real planner phrasings, a captured prompt proving reviewer findings never reach the LLM |
+| `test_governance_eval.py`      |    44 | Record/replay cache, scripted reviewers for all four arms, metrics, CSV round trip, summaries, charts                                              |
+| `test_fairness_groups.py`      |    29 | Minimum group size, raw-value groups, age bands, protected-only verdict, declared attributes, coverage rule                                        |
+| `test_policy.py`               |    25 | Policy validation and hashing, thresholds changing behaviour, approval block, regression exemption                                                 |
+| `test_reviewers.py`            |    15 | Roster validation, duplicate ids and reused tokens, hashed tokens, identification                                                                  |
+| `test_graph_end_to_end.py`     |    19 | Interrupt/resume, every reroute loop, caps, training failure, model saving, artifacts, audit chain                                                 |
+| `test_compliance_artifacts.py` |    18 | Artifact contents, NOT EVALUATED wording, digests, tamper detection                                                                                |
+| `test_leakage.py`              |    13 | Split before fit; parameters learned from train rows only                                                                                          |
+| `test_audit_chain.py`          |    12 | Hash chain, edit/delete/reorder detection, the documented truncation gap                                                                           |
+| `test_mitigation.py`           |    12 | Weight arithmetic, train-only fitting, attribute choice, the graph path, the model card                                                            |
+| `test_validation_split.py`     |     7 | Three-way split, gate on validation rows, one final scoring on test rows                                                                           |
+| `test_intersectional.py`       |     6 | Combined subgroups: hidden disparities, small combinations, never in the verdict                                                                   |
+| `test_feature_names.py`        |     5 | XGBoost-safe one-hot column names                                                                                                                  |
+| `test_fairness_honesty.py`     |     3 | Unmeasured fairness never reported as passed                                                                                                       |
+| `test_dual_signoff.py`         |    13 | One approval is not an approval, self sign-off refused, two reviewers in the artifacts, the policy switches                                        |
+| `test_completed_run.py`        |     2 | A finished run keeps the payload its reviewer decided on                                                                                           |
 
 The `test_*.py` scripts in the repository root are the original manual integration walkthroughs — they download the UCI Adult dataset and call the live Groq API, so they are run by hand and are excluded from `pytest` collection.
 
